@@ -81,14 +81,45 @@ async def processar_planta(arquivo: UploadFile = File(...)):
         [{"start": [p * fator for p in l["start"]], "end": [p * fator for p in l["end"]]} for l in paredes]
     )
     import trimesh
-    modelo = trimesh.util.concatenate([mesh_paredes, piso])
+
+    xs = [p for l in paredes for p in (l["start"][0], l["end"][0])]
+    ys = [p for l in paredes for p in (l["start"][1], l["end"][1])]
+
+    objetos_texto = eg.detectar_objetos_por_texto(
+        doc,
+        envelope=(min(xs), max(xs), min(ys), max(ys)),
+        margem_m=0.3,
+        fator_para_metros=fator,
+    )
+    NAO_FISICOS = {"CONCRETE", "GR1"}
+    NOME_COMODO = None
+    for o in objetos_texto:
+        if o["nome"].upper() in ("ACCESSIBLE UNISEX BATHROOM",) or (
+            NOME_COMODO is None and len(o["nome"]) > 15 and o["nome"].isupper()
+        ):
+            NOME_COMODO = o["nome"]
+
+    TAMANHOS_OBJETO = {
+        "TOILET": (0.4, 0.4, 0.4), "MIRROR": (0.5, 0.05, 0.6), "MIXER": (0.15, 0.15, 0.2),
+        "BASIN": (0.5, 0.4, 0.15), "GRAB RAIL": (0.05, 0.4, 0.05), "HOOK": (0.05, 0.05, 0.05),
+    }
+    TAMANHO_PADRAO_OBJETO = (0.2, 0.2, 0.2)
+
+    caixas_objetos = []
+    for o in objetos_texto:
+        if o["nome"] in NAO_FISICOS or o["nome"] == NOME_COMODO:
+            continue
+        x, y = o["posicao"][0] * fator, o["posicao"][1] * fator
+        dx, dy, dz = TAMANHOS_OBJETO.get(o["nome"], TAMANHO_PADRAO_OBJETO)
+        caixa = trimesh.creation.box(extents=[dx, dy, dz])
+        caixa.apply_translation([x, y, dz / 2])
+        caixas_objetos.append(caixa)
+
+    modelo = trimesh.util.concatenate([mesh_paredes, piso] + caixas_objetos)
 
     id_modelo = str(uuid.uuid4())
     caminho_glb = os.path.join(PASTA_MODELOS, f"{id_modelo}.glb")
     modelo.export(caminho_glb)
-
-    xs = [p for l in paredes for p in (l["start"][0], l["end"][0])]
-    ys = [p for l in paredes for p in (l["start"][1], l["end"][1])]
 
     objetos = []
     for i, l in enumerate(paredes):
@@ -108,6 +139,16 @@ async def processar_planta(arquivo: UploadFile = File(...)):
             "y": round(p["posicao"][1] * fator, 4),
             "largura_m": p.get("largura_estimada_m"),
         })
+    for i, o in enumerate(objetos_texto):
+        if o["nome"] in NAO_FISICOS or o["nome"] == NOME_COMODO:
+            continue
+        objetos.append({
+            "id": f"objeto-{i}",
+            "tipo": "objeto",
+            "nome": o["nome"],
+            "x": round(o["posicao"][0] * fator, 4),
+            "y": round(o["posicao"][1] * fator, 4),
+        })
 
     os.unlink(caminho_dxf)
 
@@ -115,6 +156,8 @@ async def processar_planta(arquivo: UploadFile = File(...)):
         "escala": {"fator_para_metros": fator, "confianca": confianca},
         "paredes_qtd": len(paredes),
         "portas_qtd": len(portas),
+        "objetos_qtd": len(caixas_objetos),
+        "nome_comodo": NOME_COMODO,
         "envelope_m": {
             "largura": round((max(xs) - min(xs)) * fator, 2),
             "altura": round((max(ys) - min(ys)) * fator, 2),
