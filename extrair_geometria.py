@@ -29,7 +29,6 @@ import math
 from collections import defaultdict, Counter
 
 import ezdxf
-import matplotlib.pyplot as plt
 
 LARGURA_PORTA_REFERENCIA_M = 0.8  # premissa: porta real fica perto de 0.8m de largura
 LAYER_PAREDE_PADROES = ["A-WALL", "WALL", "PAREDE", "PARED", "MUR", "MURO", "MAUER"]
@@ -331,6 +330,7 @@ def detectar_portas(doc, arcos, paredes, fator_para_metros):
 # ---------------------------------------------------------------------------
 
 def desenhar(paredes, portas, arcos, saida_png):
+    import matplotlib.pyplot as plt
     fig, ax = plt.subplots(figsize=(12, 12))
 
     for l in paredes:
