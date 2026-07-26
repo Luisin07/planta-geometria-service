@@ -29,6 +29,7 @@ import math
 from collections import defaultdict, Counter
 
 import ezdxf
+import matplotlib.pyplot as plt
 
 LARGURA_PORTA_REFERENCIA_M = 0.8  # premissa: porta real fica perto de 0.8m de largura
 LAYER_PAREDE_PADROES = ["A-WALL", "WALL", "PAREDE", "PARED", "MUR", "MURO", "MAUER"]
@@ -273,6 +274,30 @@ def _dist_ponto_segmento(p, a, b):
     return math.hypot(px - cx, py - cy)
 
 
+def _centro_vao_a_partir_da_insercao(x, y, rotacao_graus, largura_m, fator_para_metros):
+    """O ponto de inserção do bloco de porta é o ponto de referência do bloco
+    (tipicamente o dobradiça/canto), NÃO o centro do vão. Desloca esse ponto
+    pela metade da largura, ao longo do eixo local X do bloco (convenção mais
+    comum em blocos PUERTA/DOOR: X local = direção da largura do vão).
+
+    Isso é extração determinística, não heurística: reaproveita dado que já
+    vem do próprio INSERT (rotação) e da própria detecção de largura (arco de
+    giro), sem inventar nada sobre a geometria.
+
+    ATENÇÃO: se depois de testar em dado real a porta aparecer deslocada
+    PERPENDICULAR ao vão em vez de ao longo dele, o bloco usado nesse arquivo
+    segue a convenção contrária (Y local = largura) -- nesse caso trocar
+    cos/sin por -sin/cos abaixo.
+    """
+    if largura_m is None:
+        return [x, y]
+    deslocamento_bruto = (largura_m / 2) / fator_para_metros
+    rad = math.radians(rotacao_graus)
+    dx = math.cos(rad) * deslocamento_bruto
+    dy = math.sin(rad) * deslocamento_bruto
+    return [x + dx, y + dy]
+
+
 def detectar_portas(doc, arcos, paredes, fator_para_metros):
     msp = doc.modelspace()
     portas = []
@@ -283,6 +308,7 @@ def detectar_portas(doc, arcos, paredes, fator_para_metros):
         nome = e.dxf.name.upper()
         if any(p in nome for p in NOME_BLOCO_PORTA_PADROES):
             x, y, _ = e.dxf.insert
+            rotacao_graus = getattr(e.dxf, "rotation", 0.0)
             largura_m = None
             try:
                 bloco = doc.blocks.get(e.dxf.name)
@@ -298,10 +324,17 @@ def detectar_portas(doc, arcos, paredes, fator_para_metros):
                     largura_m = max(raios) * fator_para_metros
             except Exception:
                 pass
+
+            posicao_centro = _centro_vao_a_partir_da_insercao(
+                x, y, rotacao_graus, largura_m, fator_para_metros
+            )
+
             portas.append({
                 "metodo": "bloco",
                 "nome_bloco": e.dxf.name,
-                "posicao": [x, y],
+                "posicao": posicao_centro,
+                "posicao_insercao_bruta": [x, y],  # mantido para depuração/comparação visual
+                "rotacao_graus": rotacao_graus,
                 "largura_estimada_m": largura_m,
             })
 
@@ -330,7 +363,6 @@ def detectar_portas(doc, arcos, paredes, fator_para_metros):
 # ---------------------------------------------------------------------------
 
 def desenhar(paredes, portas, arcos, saida_png):
-    import matplotlib.pyplot as plt
     fig, ax = plt.subplots(figsize=(12, 12))
 
     for l in paredes:
@@ -347,68 +379,7 @@ def desenhar(paredes, portas, arcos, saida_png):
     plt.savefig(saida_png, dpi=200, bbox_inches="tight")
 
 
-NOTA_PALAVRAS_CHAVE = [
-    "COMPLY", "SETOUT", "CIRCULATION SPACE", "DISTANCE FROM", "CAST INTO",
-    "EXTENT OF", "WHEN IN USE", "OVERALL LENGTH", "MINIMUM CLEAR",
-    "EXCLUSION LINE", "FALL",
-]
-
-
-def _texto_e_rotulo_de_objeto(texto_bruto):
-    """Filtra texto do DXF: separa rótulo de objeto real (ex: TOILET, MIRROR)
-    de ruído (cota numérica, nota de conformidade normativa)."""
-    texto = texto_bruto.strip("{}").replace("\\P", " ").strip()
-    if not texto:
-        return None
-    sem_pontuacao = texto.replace(",", "").replace(".", "")
-    if sem_pontuacao.isdigit():
-        return None  # é uma cota numérica
-    if len(texto) <= 2:
-        return None  # marcador de uma letra só (ex: "C", "L")
-    if len(texto) > 40:
-        return None  # provavelmente frase de nota, não rótulo de objeto
-    if any(p in texto.upper() for p in NOTA_PALAVRAS_CHAVE):
-        return None
-    return texto
-
-
-def detectar_objetos_por_texto(doc, envelope=None, margem_m=0.5, fator_para_metros=1.0):
-    """Extrai rótulos de objeto (móvel/equipamento) a partir de texto no DXF.
-    Complementa parede/porta com objetos como vaso, pia, espelho -- que hoje
-    só existem como texto + hachura no DWG, nunca antes extraídos.
-
-    Se 'envelope' for passado (xmin, xmax, ymin, ymax, nas mesmas unidades
-    brutas do arquivo), descarta rótulos que caem muito fora dele -- alguns
-    textos no DXF são referências/cotas na margem da prancha, não a posição
-    real do objeto (encontrado testando no arquivo do banheiro: 'BASIN' e
-    'PAPER TOWEL' duplicados apareciam a quase 1m fora da parede real)."""
-    msp = doc.modelspace()
-    objetos = []
-    margem_bruta = margem_m / fator_para_metros if fator_para_metros else margem_m
-    for e in msp:
-        texto_bruto = None
-        pos = None
-        if e.dxftype() == "MTEXT":
-            texto_bruto = e.text if hasattr(e, "text") else e.dxf.text
-            pos = e.dxf.insert
-        elif e.dxftype() == "TEXT":
-            texto_bruto = e.dxf.text
-            pos = e.dxf.insert
-        if texto_bruto is None:
-            continue
-        rotulo = _texto_e_rotulo_de_objeto(texto_bruto)
-        if not rotulo:
-            continue
-        if envelope:
-            xmin, xmax, ymin, ymax = envelope
-            if not (xmin - margem_bruta <= pos.x <= xmax + margem_bruta and
-                    ymin - margem_bruta <= pos.y <= ymax + margem_bruta):
-                continue  # provavelmente rótulo de referência na margem da prancha
-        objetos.append({"nome": rotulo, "posicao": (pos.x, pos.y)})
-    return objetos
-
-
-
+def main():
     if len(sys.argv) < 2:
         print("Uso: python extrair_geometria.py caminho/para/arquivo.dxf")
         sys.exit(1)
