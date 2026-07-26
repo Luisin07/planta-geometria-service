@@ -298,9 +298,17 @@ def _centro_vao_a_partir_da_insercao(x, y, rotacao_graus, largura_m, fator_para_
     return [x + dx, y + dy]
 
 
-def detectar_portas(doc, arcos, paredes, fator_para_metros):
+def detectar_portas(doc, arcos, paredes, fator_para_metros, margem_envelope_m=0.15, paredes_envelope=None):
+    """paredes: lista usada para checar proximidade (normalmente paredes_amplas,
+    que preserva jogs/recortes de porta).
+    paredes_envelope: lista usada só para definir os limites reais da planta
+    (normalmente a lista final, já podada). Se não for passada, usa `paredes`
+    (comportamento antigo, sem a proteção extra)."""
     msp = doc.modelspace()
     portas = []
+
+    if paredes_envelope is None:
+        paredes_envelope = paredes
 
     for e in msp:
         if e.dxftype() != "INSERT":
@@ -338,7 +346,19 @@ def detectar_portas(doc, arcos, paredes, fator_para_metros):
                 "largura_estimada_m": largura_m,
             })
 
-    if paredes:
+    if paredes and paredes_envelope:
+        # Envelope da planta REAL (lista final/podada), com margem pequena --
+        # evita que um arco detectado "case" por coincidência com anotação/
+        # legenda distante que sobrou na lista ampla de conectividade (bug
+        # real: legenda ficou "perto" do arco em distância mas fora da
+        # estrutura de verdade). Margem pequena (15cm) porque a planta pode
+        # ser pequena (poucos metros) -- margem grande demais deixa de filtrar.
+        margem_bruta = margem_envelope_m / fator_para_metros
+        xs_env = [p for l in paredes_envelope for p in (l["start"][0], l["end"][0])]
+        ys_env = [p for l in paredes_envelope for p in (l["start"][1], l["end"][1])]
+        min_x, max_x = min(xs_env) - margem_bruta, max(xs_env) + margem_bruta
+        min_y, max_y = min(ys_env) - margem_bruta, max(ys_env) + margem_bruta
+
         for a in arcos:
             if not (70 <= _angulo_total(a) <= 100):
                 continue
@@ -346,6 +366,8 @@ def detectar_portas(doc, arcos, paredes, fator_para_metros):
             if not (0.3 <= largura_m <= 1.5):
                 continue  # não é plausível como largura de porta real
             cx, cy = a["center"]
+            if not (min_x <= cx <= max_x and min_y <= cy <= max_y):
+                continue  # fora do envelope real da planta -- provável falso positivo
             dist_min = min(_dist_ponto_segmento((cx, cy), l["start"], l["end"]) for l in paredes)
             if dist_min * fator_para_metros < 0.15:
                 portas.append({
@@ -470,7 +492,7 @@ def main():
     print(f"\nParedes extraídas: {len(paredes)} segmentos (versão limpa, para o envelope geral)")
     print(f"Método: {metodo_parede}")
 
-    portas = detectar_portas(doc, arcos, paredes_amplas, fator)
+    portas = detectar_portas(doc, arcos, paredes_amplas, fator, paredes_envelope=paredes)
     print(f"\nPortas detectadas: {len(portas)}")
     for p in portas:
         print(f"  {p}")

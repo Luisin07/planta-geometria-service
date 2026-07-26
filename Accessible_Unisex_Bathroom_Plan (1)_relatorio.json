@@ -1,0 +1,11 @@
+{
+  "arquivo": "Accessible_Unisex_Bathroom_Plan (1).dxf",
+  "escala_fator_para_metros": 0.0008931858764379129,
+  "escala_confianca": "média",
+  "escala_explicacao": "arco solto no modelspace (23 candidatos, raio representativo 895.6702 unidades do arquivo, filtrado por maior salto na distribuição)",
+  "paredes_metodo": "grafo de conectividade + poda de galho solto (nenhum layer de parede claro foi encontrado)",
+  "paredes_qtd": 7,
+  "portas_qtd": 0,
+  "envelope_largura_m": 2.45,
+  "envelope_altura_m": 2.03
+}

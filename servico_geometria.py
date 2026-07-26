@@ -70,7 +70,7 @@ async def processar_planta(arquivo: UploadFile = File(...)):
     linhas, arcos, polylines = eg.carregar_entidades(doc)
     fator, confianca, explicacao = eg.detectar_escala(doc, arcos)
     paredes, paredes_amplas, metodo_parede = eg.extrair_paredes(linhas, fator)
-    portas = eg.detectar_portas(doc, arcos, paredes_amplas, fator)
+    portas = eg.detectar_portas(doc, arcos, paredes_amplas, fator, paredes_envelope=paredes)
 
     segmentos, qtd_cortadas = g3d.dividir_paredes_pelas_portas(
         [{"start": [p * fator for p in l["start"]], "end": [p * fator for p in l["end"]]} for l in paredes],
