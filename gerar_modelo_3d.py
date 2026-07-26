@@ -86,6 +86,24 @@ def dividir_paredes_pelas_portas(paredes, portas, limiar_proximidade_m=0.15):
     return segmentos_finais, len(portas_por_segmento)
 
 
+def gerar_porta_3d(porta, espessura_parede_m, altura_porta_m=2.1):
+    """Cria um painel simples (caixa) representando a folha da porta, para
+    que ela exista como geometria própria e possa virar um nó separado no
+    .glb (necessário para seleção/coloração individual).
+
+    LIMITAÇÃO CONHECIDA: sem rotação confiável para porta detectada por
+    arco (só bloco tem rotação hoje), o painel é gerado sem rotação --
+    pode não ficar alinhado com a parede em portas detectadas por arco.
+    Suficiente como placeholder visual/nó endereçável, não como geometria
+    arquitetonicamente precisa ainda.
+    """
+    largura = porta.get("largura_estimada_m") or 0.8
+    x, y = porta["posicao"]
+    painel = trimesh.creation.box(extents=[largura, espessura_parede_m * 0.6, altura_porta_m])
+    painel.apply_translation([x, y, altura_porta_m / 2])
+    return painel
+
+
 def gerar_paredes_3d(segmentos, espessura_m, altura_m):
     """Extruda cada segmento como uma caixa individual (robusto a furo complexo)."""
     meshes = []
