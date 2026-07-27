@@ -1,0 +1,20 @@
+# Cache Python
+__pycache__/
+*.pyc
+
+# Arquivos de teste DXF (nunca devem ir pro repositório)
+*.dxf
+
+# Saídas geradas pelos scripts de teste local (extrair_geometria.py, isolar_regiao.py)
+*_relatorio.json
+*_paredes.json
+*_portas.json
+*_resultado.png
+*_recortado.dxf
+resposta_*.json
+debug_*.txt
+debug_*.py
+
+# Ambiente virtual, se algum dia for usado
+venv/
+.venv/
