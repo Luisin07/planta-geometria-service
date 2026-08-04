@@ -107,6 +107,9 @@ def _nome_comodo_mais_provavel(objetos_texto):
     if not candidatos:
         return None
     return max(candidatos, key=len)
+
+
+def _extrair_geometria_completa(caminho_dxf):
     """
     Pipeline de extração compartilhado por /processar-planta e /gerar-2d.
     Lê o DXF, detecta escala, extrai parede/porta/objeto, corta os
