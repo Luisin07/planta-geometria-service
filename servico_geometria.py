@@ -288,6 +288,40 @@ def baixar_modelo(nome_arquivo: str):
     return FileResponse(caminho, media_type="model/gltf-binary")
 
 
+@app.post("/debug-textos")
+async def debug_textos(arquivo: UploadFile = File(...)):
+    """
+    Endpoint TEMPORÁRIO de diagnóstico -- mostra cada texto detectado no
+    DXF, cru, com tamanho e se é maiúsculo, pra investigar por que a
+    seleção de nome de cômodo está escolhendo o texto errado. Remover
+    depois de resolver (não é endpoint pra ficar em produção).
+    """
+    if not arquivo.filename.lower().endswith(".dxf"):
+        raise HTTPException(status_code=400, detail="Só .dxf por enquanto.")
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp:
+        shutil.copyfileobj(arquivo.file, tmp)
+        caminho_dxf = tmp.name
+
+    try:
+        g = _extrair_geometria_completa(caminho_dxf)
+    finally:
+        os.unlink(caminho_dxf)
+
+    return {
+        "nome_comodo_escolhido": g["nome_comodo"],
+        "textos_detectados": [
+            {
+                "nome_repr": repr(o["nome"]),  # repr mostra \n, espaço extra etc. visíveis
+                "tamanho": len(o["nome"]),
+                "isupper": o["nome"].isupper(),
+                "candidato_a_nome_comodo": len(o["nome"]) > 15 and o["nome"].isupper(),
+            }
+            for o in g["objetos_texto"]
+        ],
+    }
+
+
 @app.post("/gerar-2d")
 async def gerar_2d(arquivo: UploadFile = File(...)):
     """
