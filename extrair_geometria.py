@@ -405,6 +405,19 @@ def _posicao_entidade_texto(e):
     return None
 
 
+def _altura_texto(e):
+    """Altura da fonte, em unidades brutas do arquivo -- sinal de verdade
+    do desenho técnico (nome de cômodo costuma ser desenhado maior que
+    anotação de detalhe/instrução), em vez de adivinhar pelo CONTEÚDO do
+    texto (ex: 'mais longo'), que se provou não confiável -- um texto de
+    instrução comprido pode ser mais longo que o nome do cômodo em si."""
+    if e.dxftype() == "TEXT":
+        return e.dxf.height
+    if e.dxftype() == "MTEXT":
+        return e.dxf.char_height
+    return 0
+
+
 def detectar_objetos_por_texto(doc, envelope, margem_m, fator_para_metros):
     """Varre TEXT/MTEXT do modelspace e trata cada rótulo como um objeto/móvel
     endereçável (ex: TOILET, MIRROR, GRAB RAIL), desde que caia dentro do
@@ -443,9 +456,15 @@ def detectar_objetos_por_texto(doc, envelope, margem_m, fator_para_metros):
         if not (min_x <= x <= max_x and min_y <= y <= max_y):
             continue  # fora do envelope + margem -- provável anotação/rótulo de prancha
 
+        try:
+            altura = _altura_texto(e)
+        except Exception:
+            altura = 0  # fallback seguro: se o DXF não tiver o atributo, não quebra o pipeline
+
         objetos.append({
             "nome": texto.upper(),
             "posicao": [x, y],
+            "altura_texto": altura,
         })
 
     return objetos
@@ -519,9 +538,13 @@ def desenhar_planta_tecnica(segmentos_m, objetos_fisicos, nome_comodo, envelope_
         if nome:
             ax.text(x, y - 0.28, nome, fontsize=6, ha="center", va="top", color="#333333", zorder=4)
 
-    altura_m = envelope_m.get("altura", 0)
-    if nome_comodo:
-        ax.text(0, altura_m + 0.35, nome_comodo, fontsize=13, fontweight="bold", ha="left", va="bottom")
+    # Nome de cômodo automático REMOVIDO do desenho por decisão consciente
+    # (04/08): duas heurísticas diferentes (string mais longa, depois
+    # altura de fonte) falharam por motivos reais e não óbvios -- sinal de
+    # que é problema mais caro do que vale agora, e não era requisito
+    # explícito do cliente (ele pediu parede/porta/proporção, não título
+    # automático). O campo nome_comodo continua disponível no JSON de
+    # /processar-planta pra quem quiser usar manualmente.
 
     # Barra de escala (1 metro), abaixo do desenho
     escala_y = -0.45
