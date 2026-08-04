@@ -7,7 +7,7 @@ Conversão DWG->DXF ainda é manual (ODA File Converter), fora deste
 serviço. Ver nota no final do arquivo sobre por quê.
 
 Uso local (teste antes de hospedar):
-    pip install fastapi uvicorn python-multipart
+    pip install fastapi uvicorn python-multipart pillow
     uvicorn servico_geometria:app --reload --port 8000
 
 Endpoint principal:
@@ -15,18 +15,32 @@ Endpoint principal:
     Input: arquivo .dxf (multipart/form-data, campo "arquivo")
     Output: JSON no contrato PlantaProcessada (agregados + objetos
     endereçáveis, cada um com campo "node" explícito) + URL do modelo .glb
+
+Endpoint auxiliar:
+    POST /converter-imagem
+    Input: arquivo de imagem (multipart/form-data, campo "arquivo") +
+    campo "formato" (tiff, jpeg ou png)
+    Output: a mesma imagem convertida pro formato pedido, como download.
+    Usado pela captura de topo (top-down) do modelo 3D: o app captura o
+    canvas como PNG nativo do navegador e manda pra cá quando o formato
+    pedido pelo usuário for algo que o navegador não exporta sozinho
+    (TIFF). PNG e JPEG também passam por aqui pra manter um único
+    caminho de conversão, mas o app pode exportar PNG/JPEG direto no
+    client-side se preferir evitar a chamada de rede.
 """
 
 import os
 import uuid
 import tempfile
 import shutil
+import io
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import ezdxf
 import trimesh
+from PIL import Image
 
 import extrair_geometria as eg
 import gerar_modelo_3d as g3d
@@ -35,7 +49,7 @@ app = FastAPI(title="Serviço de Geometria -- Conversor CAD")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # ajustar pra origem real do Lovable em produção
+    allow_origins=["*"],  # TODO ainda em aberto: ajustar pra origem real do Lovable em produção
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -45,6 +59,9 @@ os.makedirs(PASTA_MODELOS, exist_ok=True)
 
 ESPESSURA_PAREDE_M = 0.15
 ALTURA_PAREDE_M = 2.7
+
+FORMATOS_IMAGEM_VALIDOS = {"tiff": "TIFF", "jpeg": "JPEG", "png": "PNG"}
+MEDIA_TYPES_IMAGEM = {"tiff": "image/tiff", "jpeg": "image/jpeg", "png": "image/png"}
 
 
 @app.get("/saude")
@@ -196,6 +213,50 @@ def baixar_modelo(nome_arquivo: str):
     return FileResponse(caminho, media_type="model/gltf-binary")
 
 
+@app.post("/converter-imagem")
+async def converter_imagem(
+    arquivo: UploadFile = File(...),
+    formato: str = Form(...),  # "tiff", "jpeg" ou "png"
+):
+    """
+    Converte uma imagem (tipicamente a captura top-down do modelo 3D,
+    enviada pelo app como PNG) pro formato pedido. Motivo de existir:
+    navegador exporta PNG/JPEG nativamente via canvas, mas não exporta
+    TIFF -- por isso essa conversão fica no serviço, não no Lovable.
+    """
+    formato = formato.lower().strip()
+    if formato not in FORMATOS_IMAGEM_VALIDOS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Formato inválido: '{formato}'. Use tiff, jpeg ou png.",
+        )
+
+    conteudo = await arquivo.read()
+    try:
+        imagem = Image.open(io.BytesIO(conteudo))
+        imagem.load()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Não consegui ler a imagem: {e}")
+
+    # JPEG não suporta canal alpha (transparência) -- precisa achatar antes,
+    # senão o Pillow lança erro na hora de salvar.
+    if formato == "jpeg" and imagem.mode in ("RGBA", "P", "LA"):
+        fundo = Image.new("RGB", imagem.size, (255, 255, 255))
+        imagem = imagem.convert("RGBA")
+        fundo.paste(imagem, mask=imagem.split()[-1])
+        imagem = fundo
+
+    buffer = io.BytesIO()
+    imagem.save(buffer, format=FORMATOS_IMAGEM_VALIDOS[formato])
+    buffer.seek(0)
+
+    return StreamingResponse(
+        buffer,
+        media_type=MEDIA_TYPES_IMAGEM[formato],
+        headers={"Content-Disposition": f"attachment; filename=captura.{formato}"},
+    )
+
+
 # NOTA SOBRE O ESCOPO DXF-ONLY:
 # Conversão DWG->DXF automatizada exigiria ODA File Converter (ferramenta
 # GUI, difícil de rodar num servidor Linux sem X11) ou reimplementar via
@@ -211,3 +272,9 @@ def baixar_modelo(nome_arquivo: str):
 # porta/objeto), o que aumenta a contagem de nós no .glb consideravelmente
 # em plantas grandes (ex: 133 segmentos na "Two-story-house") -- avaliar
 # impacto de performance antes de fazer isso.
+
+# NOTA SOBRE /converter-imagem (04/08):
+# Endpoint stateless, não grava nada em disco -- recebe bytes, converte em
+# memória, devolve bytes. Se no futuro precisar de histórico de capturas
+# por projeto, isso muda (precisaria persistir em storage, associar a um
+# projeto/usuário) -- não construído agora porque não foi pedido.
