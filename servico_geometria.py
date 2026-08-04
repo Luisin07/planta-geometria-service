@@ -97,16 +97,20 @@ def _e_anotacao_tecnica(nome):
 
 
 def _nome_comodo_mais_provavel(objetos_texto):
-    """Escolhe o texto maiúsculo mais longo como nome do cômodo, sem
-    depender de um nome específico hardcoded (o código anterior tinha um
-    caso fixo só pra 'ACCESSIBLE UNISEX BATHROOM', que não generaliza pra
-    nenhum outro arquivo de cliente). Ainda é uma heurística -- só
-    funciona bem quando o nome do cômodo é de fato o texto maiúsculo mais
-    longo da prancha, o que nem sempre é verdade."""
-    candidatos = [o["nome"] for o in objetos_texto if len(o["nome"]) > 15 and o["nome"].isupper()]
+    """Escolhe o texto com MAIOR ALTURA DE FONTE como nome do cômodo --
+    convenção real de desenho técnico (nome de cômodo é desenhado maior
+    que anotação de detalhe/instrução), não suposição sobre o CONTEÚDO
+    do texto. Tentativa anterior usava 'string mais longa', que se
+    provou errada na prática: um texto de instrução (ex: 'EXTENT OF
+    BABY CHANGE STATION WHEN IN USE', 43 caracteres) pode ser mais
+    comprido que o nome do cômodo em si ('ACCESSIBLE UNISEX BATHROOM',
+    26 caracteres). Ainda é heurística -- funciona bem quando o
+    desenhista seguiu a convenção de fonte maior pro nome do cômodo, o
+    que não é garantido em todo arquivo."""
+    candidatos = [o for o in objetos_texto if len(o["nome"]) > 15 and o["nome"].isupper()]
     if not candidatos:
         return None
-    return max(candidatos, key=len)
+    return max(candidatos, key=lambda o: o.get("altura_texto", 0))["nome"]
 
 
 def _extrair_geometria_completa(caminho_dxf):
@@ -317,6 +321,7 @@ async def debug_textos(arquivo: UploadFile = File(...)):
             {
                 "nome_repr": repr(o["nome"]),  # repr mostra \n, espaço extra etc. visíveis
                 "tamanho": len(o["nome"]),
+                "altura_texto": o.get("altura_texto", 0),
                 "isupper": o["nome"].isupper(),
                 "candidato_a_nome_comodo": len(o["nome"]) > 15 and o["nome"].isupper(),
             }
