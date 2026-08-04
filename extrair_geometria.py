@@ -502,8 +502,7 @@ def desenhar_planta_tecnica(segmentos_m, objetos_fisicos, nome_comodo, envelope_
     meia_esp = espessura_m / 2
 
     for seg in segmentos_m:
-        x1, y1 = seg["start"]
-        x2, y2 = seg["end"]
+        (x1, y1), (x2, y2) = seg
         dx, dy = x2 - x1, y2 - y1
         comprimento = math.hypot(dx, dy)
         if comprimento == 0:
