@@ -472,6 +472,70 @@ def desenhar(paredes, portas, arcos, saida_png):
     plt.savefig(saida_png, dpi=200, bbox_inches="tight")
 
 
+def desenhar_planta_tecnica(segmentos_m, objetos_fisicos, nome_comodo, envelope_m, buffer,
+                             espessura_m=0.15):
+    """
+    Desenho técnico da planta baixa em metros reais, pensado para ser
+    entregue ao cliente -- diferente de `desenhar()` acima, que é debug
+    interno (linha fina + bolinha, título de contagem de segmentos).
+
+    Diferenças propositais:
+    - Parede vira uma FAIXA preenchida com espessura real (não uma linha
+      fina), calculada como um retângulo perpendicular à direção do
+      segmento -- mesma noção de espessura usada no modelo 3D
+      (ESPESSURA_PAREDE_M), só que desenhada em 2D.
+    - `segmentos_m` já deve vir CORTADO nas portas (mesma função
+      `dividir_paredes_pelas_portas` usada para gerar o modelo 3D) -- o
+      vão da porta aparece sozinho, como um espaço vazio entre dois
+      segmentos, sem precisar de lógica própria pra "desenhar porta".
+    - Objeto/móvel vira um retângulo pequeno rotulado com o nome.
+    - Nome do cômodo aparece como texto acima do desenho, se detectado.
+    - Barra de escala de 1 metro no canto, pra dar noção de proporção
+      sem depender de o observador saber ler coordenada.
+    - Sem eixo, sem título de debug -- pensado para tela/PDF de cliente.
+
+    `buffer` é um objeto tipo arquivo (ex: io.BytesIO) -- essa função não
+    grava em disco, quem chama decide o destino (arquivo local, resposta
+    HTTP, etc).
+    """
+    fig, ax = plt.subplots(figsize=(10, 10))
+    meia_esp = espessura_m / 2
+
+    for seg in segmentos_m:
+        x1, y1 = seg["start"]
+        x2, y2 = seg["end"]
+        dx, dy = x2 - x1, y2 - y1
+        comprimento = math.hypot(dx, dy)
+        if comprimento == 0:
+            continue
+        nx, ny = -dy / comprimento, dx / comprimento  # normal unitária ao segmento
+        cantos_x = [x1 + nx * meia_esp, x2 + nx * meia_esp, x2 - nx * meia_esp, x1 - nx * meia_esp]
+        cantos_y = [y1 + ny * meia_esp, y2 + ny * meia_esp, y2 - ny * meia_esp, y1 - ny * meia_esp]
+        ax.fill(cantos_x, cantos_y, facecolor="#4a4a4a", edgecolor="#2a2a2a", linewidth=0.6, zorder=2)
+
+    for o in objetos_fisicos:
+        x, y, nome = o["x"], o["y"], o.get("nome", "")
+        ax.add_patch(plt.Rectangle((x - 0.15, y - 0.15), 0.3, 0.3,
+                                    facecolor="#c9a876", edgecolor="#7a6142", linewidth=0.6, zorder=3))
+        if nome:
+            ax.text(x, y - 0.28, nome, fontsize=6, ha="center", va="top", color="#333333", zorder=4)
+
+    altura_m = envelope_m.get("altura", 0)
+    if nome_comodo:
+        ax.text(0, altura_m + 0.35, nome_comodo, fontsize=13, fontweight="bold", ha="left", va="bottom")
+
+    # Barra de escala (1 metro), abaixo do desenho
+    escala_y = -0.45
+    ax.plot([0, 1], [escala_y, escala_y], color="black", linewidth=2, solid_capstyle="butt")
+    ax.text(0.5, escala_y - 0.18, "1 m", fontsize=8, ha="center", va="top")
+
+    ax.set_aspect("equal", adjustable="box")
+    ax.axis("off")
+    fig.tight_layout()
+    fig.savefig(buffer, format="png", dpi=200, bbox_inches="tight", facecolor="white")
+    plt.close(fig)
+
+
 def main():
     if len(sys.argv) < 2:
         print("Uso: python extrair_geometria.py caminho/para/arquivo.dxf")
