@@ -69,7 +69,44 @@ def saude():
     return {"status": "ok"}
 
 
-def _extrair_geometria_completa(caminho_dxf):
+import re
+
+PADROES_ANOTACAO_TECNICA = [
+    r'^ESCALA\b',
+    r'^APROVA[CÇ][AÕ]ES?\b',
+    r'^CORTE\b',
+    r'^A\s*=\s*[\d.,]+\s*M2$',      # rótulo de área, ex: "A=25M2"
+    r'^I\s*=\s*\d+%?$',             # inclinação, ex: "I=25%"
+    r'^\d+([.,]\d+)?%?$',           # número ou percentual solto
+    r'^[^\wÀ-ÿ]{1,2}$',             # símbolo isolado, ex: "℄", "-"
+]
+
+
+def _e_anotacao_tecnica(nome):
+    """Filtro por padrão (lista negra), não por nome conhecido (lista
+    branca) -- lista branca faria objeto de vocabulário novo (ex: 'BED'
+    numa planta de quarto que nunca vimos) sumir silenciosamente do
+    desenho. Isso aqui só remove lixo de anotação técnica óbvio (cota,
+    percentual, cabeçalho de escala/aprovação). NÃO pega tudo -- termo
+    técnico que parece nome de objeto (ex: 'EXCLUSION LINE', 'BACK REST')
+    ainda passa, porque não tem padrão textual que diferencie isso de um
+    nome de móvel real sem olhar a camada (layer) de origem no DXF, que
+    esta função não consulta hoje."""
+    nome_limpo = nome.strip()
+    return any(re.match(p, nome_limpo, re.IGNORECASE) for p in PADROES_ANOTACAO_TECNICA)
+
+
+def _nome_comodo_mais_provavel(objetos_texto):
+    """Escolhe o texto maiúsculo mais longo como nome do cômodo, sem
+    depender de um nome específico hardcoded (o código anterior tinha um
+    caso fixo só pra 'ACCESSIBLE UNISEX BATHROOM', que não generaliza pra
+    nenhum outro arquivo de cliente). Ainda é uma heurística -- só
+    funciona bem quando o nome do cômodo é de fato o texto maiúsculo mais
+    longo da prancha, o que nem sempre é verdade."""
+    candidatos = [o["nome"] for o in objetos_texto if len(o["nome"]) > 15 and o["nome"].isupper()]
+    if not candidatos:
+        return None
+    return max(candidatos, key=len)
     """
     Pipeline de extração compartilhado por /processar-planta e /gerar-2d.
     Lê o DXF, detecta escala, extrai parede/porta/objeto, corta os
@@ -102,16 +139,13 @@ def _extrair_geometria_completa(caminho_dxf):
         fator_para_metros=fator,
     )
 
-    nome_comodo = None
-    for o in objetos_texto:
-        if o["nome"].upper() in ("ACCESSIBLE UNISEX BATHROOM",) or (
-            nome_comodo is None and len(o["nome"]) > 15 and o["nome"].isupper()
-        ):
-            nome_comodo = o["nome"]
+    nome_comodo = _nome_comodo_mais_provavel(objetos_texto)
 
     objetos_fisicos = []
     for o in objetos_texto:
         if o["nome"] in NAO_FISICOS or o["nome"] == nome_comodo:
+            continue
+        if _e_anotacao_tecnica(o["nome"]):
             continue
         objetos_fisicos.append({
             "nome": o["nome"],
