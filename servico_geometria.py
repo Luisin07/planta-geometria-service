@@ -319,6 +319,19 @@ async def debug_textos(arquivo: UploadFile = File(...)):
     return {
         "nome_comodo_escolhido": g["nome_comodo"],
         "envelope_m": g["envelope_m"],
+        "segmentos_parede_qtd": len(g["segmentos_m"]),
+        "amostra_segmentos_parede": [
+            {"start": s[0], "end": s[1]} for s in g["segmentos_m"][:5]
+        ],
+        "portas_estruturais": [
+            {
+                "x_m": round(p["posicao"][0], 2),
+                "y_m": round(p["posicao"][1], 2),
+                "largura_estimada_m": p.get("largura_estimada_m"),
+                "metodo": p.get("metodo"),
+            }
+            for p in g["portas_m"]
+        ],
         "textos_detectados": [
             {
                 "nome_repr": repr(o["nome"]),
