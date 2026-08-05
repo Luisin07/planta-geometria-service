@@ -318,11 +318,14 @@ async def debug_textos(arquivo: UploadFile = File(...)):
 
     return {
         "nome_comodo_escolhido": g["nome_comodo"],
+        "envelope_m": g["envelope_m"],
         "textos_detectados": [
             {
-                "nome_repr": repr(o["nome"]),  # repr mostra \n, espaço extra etc. visíveis
+                "nome_repr": repr(o["nome"]),
                 "tamanho": len(o["nome"]),
                 "altura_texto": o.get("altura_texto", 0),
+                "x_m": round(o["posicao"][0] * g["fator"], 2),
+                "y_m": round(o["posicao"][1] * g["fator"], 2),
                 "isupper": o["nome"].isupper(),
                 "candidato_a_nome_comodo": len(o["nome"]) > 15 and o["nome"].isupper(),
             }
