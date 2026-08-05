@@ -79,6 +79,7 @@ PADROES_ANOTACAO_TECNICA = [
     r'^I\s*=\s*\d+%?$',             # inclinação, ex: "I=25%"
     r'^\d+([.,]\d+)?%?$',           # número ou percentual solto
     r'^[^\wÀ-ÿ]{1,2}$',             # símbolo isolado, ex: "℄", "-"
+    r'^[A-ZÀ-ÿ]{1,2}$',              # letra solta, ex: "C"/"L" (símbolo de eixo mal exportado)
 ]
 
 
