@@ -546,10 +546,21 @@ def desenhar_planta_tecnica(segmentos_m, objetos_fisicos, nome_comodo, envelope_
     # automático). O campo nome_comodo continua disponível no JSON de
     # /processar-planta pra quem quiser usar manualmente.
 
-    # Barra de escala (1 metro), abaixo do desenho
-    escala_y = -0.45
-    ax.plot([0, 1], [escala_y, escala_y], color="black", linewidth=2, solid_capstyle="butt")
-    ax.text(0.5, escala_y - 0.18, "1 m", fontsize=8, ha="center", va="top")
+    # Barra de escala (1 metro) -- posicionada RELATIVA à posição real das
+    # paredes, não em coordenada absoluta fixa. Bug anterior: barra fixa em
+    # x=0 assumia que toda planta começa perto da origem, o que quebrou em
+    # arquivo com coordenada absoluta longe de (0,0) -- o enquadramento
+    # tinha que abranger a barra (em x=0) E a planta (em x=380, nesse
+    # caso), espremendo a planta inteira a ponto de ficar invisível.
+    xs_paredes = [pt[0] for seg in segmentos_m for pt in seg]
+    ys_paredes = [pt[1] for seg in segmentos_m for pt in seg]
+    if xs_paredes:
+        escala_x0 = min(xs_paredes)
+        escala_y = min(ys_paredes) - 0.6
+    else:
+        escala_x0, escala_y = 0, -0.45
+    ax.plot([escala_x0, escala_x0 + 1], [escala_y, escala_y], color="black", linewidth=2, solid_capstyle="butt")
+    ax.text(escala_x0 + 0.5, escala_y - 0.18, "1 m", fontsize=8, ha="center", va="top")
 
     ax.set_aspect("equal", adjustable="box")
     ax.axis("off")
