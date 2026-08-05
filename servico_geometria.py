@@ -296,57 +296,6 @@ def baixar_modelo(nome_arquivo: str):
     return FileResponse(caminho, media_type="model/gltf-binary")
 
 
-@app.post("/debug-textos")
-async def debug_textos(arquivo: UploadFile = File(...)):
-    """
-    Endpoint TEMPORÁRIO de diagnóstico -- mostra cada texto detectado no
-    DXF, cru, com tamanho e se é maiúsculo, pra investigar por que a
-    seleção de nome de cômodo está escolhendo o texto errado. Remover
-    depois de resolver (não é endpoint pra ficar em produção).
-    """
-    if not arquivo.filename.lower().endswith(".dxf"):
-        raise HTTPException(status_code=400, detail="Só .dxf por enquanto.")
-
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".dxf") as tmp:
-        shutil.copyfileobj(arquivo.file, tmp)
-        caminho_dxf = tmp.name
-
-    try:
-        g = _extrair_geometria_completa(caminho_dxf)
-    finally:
-        os.unlink(caminho_dxf)
-
-    return {
-        "nome_comodo_escolhido": g["nome_comodo"],
-        "envelope_m": g["envelope_m"],
-        "segmentos_parede_qtd": len(g["segmentos_m"]),
-        "amostra_segmentos_parede": [
-            {"start": s[0], "end": s[1]} for s in g["segmentos_m"][:5]
-        ],
-        "portas_estruturais": [
-            {
-                "x_m": round(p["posicao"][0], 2),
-                "y_m": round(p["posicao"][1], 2),
-                "largura_estimada_m": p.get("largura_estimada_m"),
-                "metodo": p.get("metodo"),
-            }
-            for p in g["portas_m"]
-        ],
-        "textos_detectados": [
-            {
-                "nome_repr": repr(o["nome"]),
-                "tamanho": len(o["nome"]),
-                "altura_texto": o.get("altura_texto", 0),
-                "x_m": round(o["posicao"][0] * g["fator"], 2),
-                "y_m": round(o["posicao"][1] * g["fator"], 2),
-                "isupper": o["nome"].isupper(),
-                "candidato_a_nome_comodo": len(o["nome"]) > 15 and o["nome"].isupper(),
-            }
-            for o in g["objetos_texto"]
-        ],
-    }
-
-
 @app.post("/gerar-2d")
 async def gerar_2d(arquivo: UploadFile = File(...)):
     """
