@@ -531,7 +531,7 @@ corresponder), escolha o mais provável e marque confianca="baixa"."""
             continue
     else:
         raise HTTPException(
-            status_code=502,
+            status_code=422,  # NAO usar 502 -- Lovable trata 502 como sinal de retry (cold start); isso aqui e falha real do provedor, retry so gasta credito de novo
             detail=f"Nenhum modelo Gemini candidato respondeu. Último erro: {ultimo_erro}",
         )
 
@@ -603,7 +603,7 @@ async def aplicar_textura(req: TexturaRequest):
                                      __import__("urllib.request", fromlist=["urlopen"]).urlopen(str(item)).read())
         imagem_textura = Image.open(buffer_textura)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Falha ao gerar textura no Replicate: {e}")
+        raise HTTPException(status_code=422, detail=f"Falha ao gerar textura no Replicate: {e}")
 
     malha_nova, uv = g3d.criar_caixa_com_uv(tamanho=tamanho, centro=centro)
     malha_nova.visual = trimesh.visual.TextureVisuals(uv=uv, image=imagem_textura)
