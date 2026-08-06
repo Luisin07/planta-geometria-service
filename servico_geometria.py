@@ -31,13 +31,17 @@ import uuid
 import tempfile
 import shutil
 import io
+import json
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import ezdxf
 import trimesh
 from PIL import Image
+from google import genai
+from google.genai import types as genai_types
 
 import extrair_geometria as eg
 import gerar_modelo_3d as g3d
@@ -61,6 +65,56 @@ FORMATOS_IMAGEM_VALIDOS = {"tiff": "TIFF", "jpeg": "JPEG", "png": "PNG"}
 MEDIA_TYPES_IMAGEM = {"tiff": "image/tiff", "jpeg": "image/jpeg", "png": "image/png"}
 
 NAO_FISICOS = {"CONCRETE", "GR1"}
+
+MODELOS_CANDIDATOS_3B = [
+    "gemini-3.5-flash",       # confirmado funcionando em 05/08
+    "gemini-2.5-flash-lite",  # confirmado indisponível pra conta nova em 05/08, mantido como fallback
+    "gemini-2.5-flash",
+    "gemini-flash-latest",
+]
+
+SCHEMA_OPERACAO_3B = {
+    "type": "OBJECT",
+    "properties": {
+        "suportado": {
+            "type": "BOOLEAN",
+            "description": "false se o comando pedir algo que NÃO seja mudar a cor de um "
+                            "objeto (ex: mover, redimensionar, trocar objeto) -- o sistema "
+                            "hoje só sabe fazer mudança de cor. Nunca force um comando de "
+                            "outra natureza a caber em 'cor'.",
+        },
+        "motivo_se_nao_suportado": {
+            "type": "STRING",
+            "description": "Se suportado=false, explica em uma frase o que o comando pedia "
+                            "e por que está fora do escopo atual. Se suportado=true, usar "
+                            "string vazia \"\".",
+        },
+        "objeto_id": {
+            "type": "STRING",
+            "description": "O campo 'id' EXATO do objeto na lista fornecida -- nunca inventar "
+                            "um id. Se suportado=false, usar string vazia \"\".",
+        },
+        "propriedade": {
+            "type": "STRING",
+            "description": "Sempre 'cor' se suportado=true. Se suportado=false, usar string vazia \"\".",
+        },
+        "valor_hex": {
+            "type": "STRING",
+            "description": "Cor convertida para hex, ex: '#0000FF' para azul, se suportado=true. "
+                            "Se suportado=false, usar string vazia \"\".",
+        },
+        "confianca": {
+            "type": "STRING",
+            "enum": ["alta", "media", "baixa"],
+            "description": "Alta: o objeto mencionado bate claramente com um item da lista. "
+                            "Baixa: ambíguo (ex: mais de um objeto poderia ser 'o espelho').",
+        },
+    },
+    # TODOS os campos sempre obrigatórios -- ver nota no prototipo isolado
+    # (descoberta-3b/interpretar_comando_gemini.py) sobre por que
+    # "obrigatório condicional" só em texto não é confiável.
+    "required": ["suportado", "motivo_se_nao_suportado", "objeto_id", "propriedade", "valor_hex", "confianca"],
+}
 
 
 @app.get("/saude")
@@ -379,6 +433,91 @@ async def converter_imagem(
         media_type=MEDIA_TYPES_IMAGEM[formato],
         headers={"Content-Disposition": f"attachment; filename=captura.{formato}"},
     )
+
+
+class ComandoRequest(BaseModel):
+    comando: str
+    objetos: list[dict]
+
+
+@app.post("/interpretar-comando")
+async def interpretar_comando(req: ComandoRequest):
+    """
+    Camada 3b (fase de descoberta validada em 05/08, ver documento de
+    retomada seção 11) -- traduz um comando em linguagem natural (esperado
+    em português) numa operação estruturada que a Camada 3a já sabe
+    executar. Hoje só suporta mudança de cor -- qualquer outro pedido
+    (mover, redimensionar, trocar objeto) volta com suportado=false e um
+    motivo explícito, em vez de forçar uma resposta errada.
+
+    Input esperado: {"comando": "...", "objetos": [...]} -- a lista de
+    objetos é a mesma que já vem no JSON de /processar-planta (precisa
+    ser guardada pelo app depois de processar a planta, pra não precisar
+    reprocessar o DXF só pra interpretar um comando).
+    """
+    if "GEMINI_API_KEY" not in os.environ:
+        raise HTTPException(
+            status_code=503,
+            detail="GEMINI_API_KEY não configurada no serviço. Configure nas "
+                   "variáveis de ambiente do Render antes de usar este endpoint.",
+        )
+
+    lista_objetos = "\n".join(
+        f'- id="{o["id"]}", nome="{o.get("nome", o.get("tipo", ""))}", tipo="{o.get("tipo", "")}"'
+        for o in req.objetos
+    )
+    prompt = f"""Você traduz um comando em português para uma operação estruturada
+sobre um modelo 3D de planta baixa.
+
+Objetos disponíveis nesta planta (só pode escolher um destes, pelo id exato):
+{lista_objetos}
+
+Comando do usuário: "{req.comando}"
+
+O sistema hoje SÓ sabe executar uma operação: mudar a cor de um objeto.
+Se o comando pedir qualquer outra coisa (mover, girar, redimensionar,
+trocar por outro objeto, etc.), marque suportado=false e explique o
+motivo -- não tente forçar o comando a caber em 'cor'.
+
+Responda com o JSON da operação, no formato definido. Se o comando for
+ambíguo mas ainda assim for sobre cor (mais de um objeto poderia
+corresponder), escolha o mais provável e marque confianca="baixa"."""
+
+    cliente = genai.Client()
+    ultimo_erro = None
+    for nome_modelo in MODELOS_CANDIDATOS_3B:
+        try:
+            resposta = cliente.models.generate_content(
+                model=nome_modelo,
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=SCHEMA_OPERACAO_3B,
+                ),
+            )
+            operacao = json.loads(resposta.text)
+            break
+        except Exception as e:
+            ultimo_erro = e
+            continue
+    else:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Nenhum modelo Gemini candidato respondeu. Último erro: {ultimo_erro}",
+        )
+
+    # Mesma validação defensiva do protótipo isolado -- não confia cegamente
+    # no que o modelo devolveu, mesmo com schema forçando os campos.
+    if operacao.get("suportado"):
+        ids_validos = {o["id"] for o in req.objetos}
+        if not operacao.get("objeto_id") or operacao["objeto_id"] not in ids_validos:
+            operacao["suportado"] = False
+            operacao["motivo_se_nao_suportado"] = (
+                "Modelo retornou objeto_id inválido ou ausente -- tratado como não suportado "
+                "por segurança, não aplicar."
+            )
+
+    return operacao
 
 
 # NOTA SOBRE O ESCOPO DXF-ONLY:
