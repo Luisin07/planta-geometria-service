@@ -42,6 +42,7 @@ import trimesh
 from PIL import Image
 from google import genai
 from google.genai import types as genai_types
+import replicate
 
 import extrair_geometria as eg
 import gerar_modelo_3d as g3d
@@ -518,6 +519,80 @@ corresponder), escolha o mais provável e marque confianca="baixa"."""
             )
 
     return operacao
+
+
+class TexturaRequest(BaseModel):
+    modelo_id: str
+    node_objeto: str
+    prompt_textura: str
+
+
+@app.post("/aplicar-textura")
+async def aplicar_textura(req: TexturaRequest):
+    """
+    Camada 3c (fase de descoberta validada em 05/08, integração em cena
+    real validada localmente antes deste endpoint -- ver documento de
+    retomada seções 11 e 14). Gera uma textura via Replicate e aplica
+    num objeto específico dentro de um modelo 3D já processado, via UV
+    mapping -- sem afetar o resto da cena.
+
+    Limitação conhecida (mesma da descoberta isolada): sem continuidade
+    perfeita do padrão da textura nas quinas do objeto -- cada face
+    recebe uma cópia independente e completa da textura.
+    """
+    if "REPLICATE_API_TOKEN" not in os.environ:
+        raise HTTPException(
+            status_code=503,
+            detail="REPLICATE_API_TOKEN não configurada no serviço.",
+        )
+
+    caminho_glb = os.path.join(PASTA_MODELOS, req.modelo_id)
+    if not os.path.exists(caminho_glb):
+        raise HTTPException(status_code=404, detail="Modelo não encontrado")
+
+    cena = trimesh.load(caminho_glb)
+    if not isinstance(cena, trimesh.Scene):
+        raise HTTPException(status_code=400, detail="Modelo não é uma cena com nós nomeados")
+    if req.node_objeto not in cena.graph.nodes:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Node '{req.node_objeto}' não existe nesta cena. "
+                   f"Nós disponíveis: {list(cena.graph.nodes)}",
+        )
+
+    _transform, nome_geometria = cena.graph[req.node_objeto]
+    geom_original = cena.geometry[nome_geometria]
+    centro = tuple(geom_original.bounds.mean(axis=0))
+    tamanho = tuple(geom_original.extents)
+
+    try:
+        saida_replicate = replicate.run(
+            "black-forest-labs/flux-schnell",
+            input={"prompt": req.prompt_textura, "aspect_ratio": "1:1", "output_format": "png"},
+        )
+        item = saida_replicate[0] if isinstance(saida_replicate, list) else saida_replicate
+        buffer_textura = io.BytesIO(item.read() if hasattr(item, "read") else
+                                     __import__("urllib.request", fromlist=["urlopen"]).urlopen(str(item)).read())
+        imagem_textura = Image.open(buffer_textura)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Falha ao gerar textura no Replicate: {e}")
+
+    malha_nova, uv = g3d.criar_caixa_com_uv(tamanho=tamanho, centro=centro)
+    malha_nova.visual = trimesh.visual.TextureVisuals(uv=uv, image=imagem_textura)
+
+    # Substitui SÓ a geometria desse objeto -- resto da cena intocado
+    # (validado localmente: outros nós continuam com vértices/UV originais).
+    cena.geometry[nome_geometria] = malha_nova
+
+    id_novo_modelo = str(uuid.uuid4())
+    caminho_saida = os.path.join(PASTA_MODELOS, f"{id_novo_modelo}.glb")
+    cena.export(caminho_saida)
+
+    return {
+        "modelo_3d_url": f"/modelo/{id_novo_modelo}.glb",
+        "node_texturizado": req.node_objeto,
+        "status": "concluido",
+    }
 
 
 # NOTA SOBRE O ESCOPO DXF-ONLY:

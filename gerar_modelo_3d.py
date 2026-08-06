@@ -126,6 +126,53 @@ def gerar_piso(paredes, espessura_piso_m=0.1):
     return piso
 
 
+def criar_caixa_com_uv(tamanho=(1.0, 1.0, 1.0), centro=(0.0, 0.0, 0.0)):
+    """
+    Caixa 3D com UV mapping independente por face (Camada 3c, validado
+    isoladamente em 05/08 antes de integrar aqui -- ver documento de
+    retomada seção 11).
+
+    Por que não usar trimesh.creation.box() direto: a caixa padrão
+    compartilha vértices entre faces adjacentes (só 8 vértices no total)
+    -- isso impede UV independente por face, porque o vértice de um
+    canto pertenceria a 3 faces ao mesmo tempo, cada uma precisando de
+    um UV diferente ali. Aqui cada face ganha seus 4 vértices próprios
+    (24 no total), fisicamente no mesmo lugar mas logicamente
+    independentes -- cada face pode ter sua própria textura completa
+    (UV de 0,0 a 1,1).
+
+    `tamanho`: (dx, dy, dz) -- pode ser não-cúbico, objetos reais da
+    cena raramente são cubos perfeitos (ex: espelho é fino e alto).
+    `centro`: posição real do objeto na cena -- normalmente o centro da
+    bounding box do objeto original que está sendo substituído (a
+    posição costuma estar embutida nos vértices, não no transform do
+    grafo da cena, que geralmente vem identidade).
+    """
+    dx, dy, dz = tamanho
+    sx, sy, sz = dx / 2, dy / 2, dz / 2
+
+    faces_vertices = {
+        "+X": [(sx, -sy, -sz), (sx, sy, -sz), (sx, sy, sz), (sx, -sy, sz)],
+        "-X": [(-sx, sy, -sz), (-sx, -sy, -sz), (-sx, -sy, sz), (-sx, sy, sz)],
+        "+Y": [(sx, sy, -sz), (-sx, sy, -sz), (-sx, sy, sz), (sx, sy, sz)],
+        "-Y": [(-sx, -sy, -sz), (sx, -sy, -sz), (sx, -sy, sz), (-sx, -sy, sz)],
+        "+Z": [(-sx, -sy, sz), (sx, -sy, sz), (sx, sy, sz), (-sx, sy, sz)],
+        "-Z": [(-sx, sy, -sz), (sx, sy, -sz), (sx, -sy, -sz), (-sx, -sy, -sz)],
+    }
+
+    vertices, faces, uv = [], [], []
+    for cantos in faces_vertices.values():
+        base = len(vertices)
+        vertices.extend(cantos)
+        uv.extend([(0, 0), (1, 0), (1, 1), (0, 1)])
+        faces.append([base + 0, base + 1, base + 2])
+        faces.append([base + 0, base + 2, base + 3])
+
+    vertices = np.array(vertices, dtype=float) + np.array(centro, dtype=float)
+    malha = trimesh.Trimesh(vertices=vertices, faces=np.array(faces, dtype=int), process=False)
+    return malha, np.array(uv, dtype=float)
+
+
 def main():
     if len(sys.argv) < 5:
         print("Uso: python gerar_modelo_3d.py paredes.json portas.json saida.glb FATOR_PARA_METROS [espessura_m=0.15] [altura_m=2.7]")
