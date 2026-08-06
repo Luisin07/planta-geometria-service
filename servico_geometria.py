@@ -43,6 +43,7 @@ from PIL import Image
 from google import genai
 from google.genai import types as genai_types
 import replicate
+from supabase import create_client
 
 import extrair_geometria as eg
 import gerar_modelo_3d as g3d
@@ -56,8 +57,51 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-PASTA_MODELOS = os.path.join(tempfile.gettempdir(), "modelos_3d")
+PASTA_MODELOS = os.path.join(tempfile.gettempdir(), "modelos_3d")  # usado só como scratch local antes do upload
 os.makedirs(PASTA_MODELOS, exist_ok=True)
+
+SUPABASE_BUCKET = os.environ.get("SUPABASE_BUCKET_MODELOS", "modelos-3d")
+URL_ASSINADA_EXPIRA_SEGUNDOS = 60 * 60 * 24  # 24 horas
+
+
+def _cliente_supabase():
+    url = os.environ.get("SUPABASE_URL")
+    chave = os.environ.get("SUPABASE_SERVICE_KEY")
+    if not url or not chave:
+        raise HTTPException(
+            status_code=503,
+            detail="SUPABASE_URL / SUPABASE_SERVICE_KEY não configuradas no serviço. "
+                   "Necessário para armazenamento permanente de modelos 3D.",
+        )
+    return create_client(url, chave)
+
+
+def _salvar_modelo_permanente(caminho_local, nome_arquivo):
+    """
+    Sobe um .glb pro Supabase Storage (bucket privado) e devolve uma URL
+    assinada, temporária -- substitui o armazenamento em pasta temporária
+    do servidor, que se perdia a cada deploy/reinício (achado real de
+    05/08, ver documento de retomada seção 14).
+    """
+    cliente = _cliente_supabase()
+    with open(caminho_local, "rb") as f:
+        cliente.storage.from_(SUPABASE_BUCKET).upload(
+            nome_arquivo, f, file_options={"content-type": "model/gltf-binary", "upsert": "true"}
+        )
+    resultado = cliente.storage.from_(SUPABASE_BUCKET).create_signed_url(
+        nome_arquivo, URL_ASSINADA_EXPIRA_SEGUNDOS
+    )
+    return resultado["signedURL"]
+
+
+def _baixar_modelo_permanente(nome_arquivo, caminho_destino_local):
+    """Baixa um .glb do Supabase Storage pra um arquivo local temporário,
+    pra poder ser reaberto com trimesh (que trabalha com arquivo, não
+    stream direto do Storage)."""
+    cliente = _cliente_supabase()
+    conteudo = cliente.storage.from_(SUPABASE_BUCKET).download(nome_arquivo)
+    with open(caminho_destino_local, "wb") as f:
+        f.write(conteudo)
 
 ESPESSURA_PAREDE_M = 0.15
 ALTURA_PAREDE_M = 2.7
@@ -326,8 +370,11 @@ async def processar_planta(arquivo: UploadFile = File(...)):
         })
 
     id_modelo = str(uuid.uuid4())
-    caminho_glb = os.path.join(PASTA_MODELOS, f"{id_modelo}.glb")
-    scene.export(caminho_glb)
+    nome_arquivo = f"{id_modelo}.glb"
+    caminho_glb_local = os.path.join(PASTA_MODELOS, nome_arquivo)
+    scene.export(caminho_glb_local)
+    url_modelo = _salvar_modelo_permanente(caminho_glb_local, nome_arquivo)
+    os.unlink(caminho_glb_local)  # scratch local não precisa mais existir após o upload
 
     return {
         "escala": {"fator_para_metros": fator, "confianca": g["confianca"]},
@@ -337,18 +384,19 @@ async def processar_planta(arquivo: UploadFile = File(...)):
         "nome_comodo": g["nome_comodo"],
         "envelope_m": g["envelope_m"],
         "objetos": objetos,
-        "modelo_3d_url": f"/modelo/{id_modelo}.glb",
+        "modelo_id": nome_arquivo,  # usar este valor em /aplicar-textura, não a URL
+        "modelo_3d_url": url_modelo,  # URL assinada, expira em 24h -- gerar de novo se precisar depois
         "modelo_3d_nos_separados": True,
         "status": "concluido",
     }
 
 
-@app.get("/modelo/{nome_arquivo}")
-def baixar_modelo(nome_arquivo: str):
-    caminho = os.path.join(PASTA_MODELOS, nome_arquivo)
-    if not os.path.exists(caminho):
-        raise HTTPException(status_code=404, detail="Modelo não encontrado")
-    return FileResponse(caminho, media_type="model/gltf-binary")
+# NOTA (05/08): endpoint GET /modelo/{arquivo} REMOVIDO -- servia o .glb
+# direto da pasta temporária local, que não existe mais como fonte de
+# verdade. Modelos agora vêm do Supabase Storage via URL assinada
+# retornada em "modelo_3d_url" na resposta de /processar-planta e
+# /aplicar-textura. Se algo no app ainda estiver chamando GET /modelo/*,
+# precisa ser atualizado para usar a URL assinada diretamente.
 
 
 @app.post("/gerar-2d")
@@ -546,11 +594,14 @@ async def aplicar_textura(req: TexturaRequest):
             detail="REPLICATE_API_TOKEN não configurada no serviço.",
         )
 
-    caminho_glb = os.path.join(PASTA_MODELOS, req.modelo_id)
-    if not os.path.exists(caminho_glb):
-        raise HTTPException(status_code=404, detail="Modelo não encontrado")
+    caminho_glb_local = os.path.join(PASTA_MODELOS, f"origem_{req.modelo_id}")
+    try:
+        _baixar_modelo_permanente(req.modelo_id, caminho_glb_local)
+    except Exception as e:
+        raise HTTPException(status_code=404, detail=f"Modelo não encontrado no Storage: {e}")
 
-    cena = trimesh.load(caminho_glb)
+    cena = trimesh.load(caminho_glb_local)
+    os.unlink(caminho_glb_local)
     if not isinstance(cena, trimesh.Scene):
         raise HTTPException(status_code=400, detail="Modelo não é uma cena com nós nomeados")
     if req.node_objeto not in cena.graph.nodes:
@@ -585,11 +636,15 @@ async def aplicar_textura(req: TexturaRequest):
     cena.geometry[nome_geometria] = malha_nova
 
     id_novo_modelo = str(uuid.uuid4())
-    caminho_saida = os.path.join(PASTA_MODELOS, f"{id_novo_modelo}.glb")
-    cena.export(caminho_saida)
+    nome_arquivo_novo = f"{id_novo_modelo}.glb"
+    caminho_saida_local = os.path.join(PASTA_MODELOS, nome_arquivo_novo)
+    cena.export(caminho_saida_local)
+    url_modelo = _salvar_modelo_permanente(caminho_saida_local, nome_arquivo_novo)
+    os.unlink(caminho_saida_local)
 
     return {
-        "modelo_3d_url": f"/modelo/{id_novo_modelo}.glb",
+        "modelo_id": nome_arquivo_novo,
+        "modelo_3d_url": url_modelo,
         "node_texturizado": req.node_objeto,
         "status": "concluido",
     }

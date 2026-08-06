@@ -10,3 +10,4 @@ matplotlib==3.9.0
 Pillow==10.4.0
 google-genai
 replicate
+supabase
