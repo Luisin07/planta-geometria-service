@@ -549,20 +549,27 @@ corresponder), escolha o mais provável e marque confianca="baixa"."""
     return operacao
 
 
-class TexturaRequest(BaseModel):
-    modelo_id: str
-    node_objeto: str
-    prompt_textura: str
-
-
 @app.post("/aplicar-textura")
-async def aplicar_textura(req: TexturaRequest):
+async def aplicar_textura(
+    arquivo: UploadFile = File(...),
+    node_objeto: str = Form(...),
+    prompt_textura: str = Form(...),
+):
     """
     Camada 3c (fase de descoberta validada em 05/08, integração em cena
     real validada localmente antes deste endpoint -- ver documento de
     retomada seções 11 e 14). Gera uma textura via Replicate e aplica
     num objeto específico dentro de um modelo 3D já processado, via UV
     mapping -- sem afetar o resto da cena.
+
+    CORRIGIDO EM 07/08: antes recebia um "modelo_id" (referência a
+    arquivo na pasta temporária local do serviço) -- quebrava sempre que
+    o Render reiniciava entre o processamento original e a aplicação de
+    textura (praticamente sempre, no plano gratuito). Agora é stateless
+    como os outros endpoints: recebe o .glb de verdade no corpo da
+    requisição (o app já tem esse arquivo persistido em
+    storage:.../servico.glb -- é só reenviar os bytes, sem depender de
+    o serviço "lembrar" de nada entre chamadas).
 
     Limitação conhecida (mesma da descoberta isolada): sem continuidade
     perfeita do padrão da textura nas quinas do objeto -- cada face
@@ -574,21 +581,25 @@ async def aplicar_textura(req: TexturaRequest):
             detail="REPLICATE_API_TOKEN não configurada no serviço.",
         )
 
-    caminho_glb = os.path.join(PASTA_MODELOS, req.modelo_id)
-    if not os.path.exists(caminho_glb):
-        raise HTTPException(status_code=404, detail="Modelo não encontrado (link efêmero pode ter expirado)")
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".glb") as tmp:
+        shutil.copyfileobj(arquivo.file, tmp)
+        caminho_glb = tmp.name
 
-    cena = trimesh.load(caminho_glb)
+    try:
+        cena = trimesh.load(caminho_glb)
+    finally:
+        os.unlink(caminho_glb)
+
     if not isinstance(cena, trimesh.Scene):
         raise HTTPException(status_code=400, detail="Modelo não é uma cena com nós nomeados")
-    if req.node_objeto not in cena.graph.nodes:
+    if node_objeto not in cena.graph.nodes:
         raise HTTPException(
             status_code=404,
-            detail=f"Node '{req.node_objeto}' não existe nesta cena. "
+            detail=f"Node '{node_objeto}' não existe nesta cena. "
                    f"Nós disponíveis: {list(cena.graph.nodes)}",
         )
 
-    _transform, nome_geometria = cena.graph[req.node_objeto]
+    _transform, nome_geometria = cena.graph[node_objeto]
     geom_original = cena.geometry[nome_geometria]
     centro = tuple(geom_original.bounds.mean(axis=0))
     tamanho = tuple(geom_original.extents)
@@ -596,7 +607,7 @@ async def aplicar_textura(req: TexturaRequest):
     try:
         saida_replicate = replicate.run(
             "black-forest-labs/flux-schnell",
-            input={"prompt": req.prompt_textura, "aspect_ratio": "1:1", "output_format": "png"},
+            input={"prompt": prompt_textura, "aspect_ratio": "1:1", "output_format": "png"},
         )
         item = saida_replicate[0] if isinstance(saida_replicate, list) else saida_replicate
         buffer_textura = io.BytesIO(item.read() if hasattr(item, "read") else
@@ -619,7 +630,7 @@ async def aplicar_textura(req: TexturaRequest):
     return {
         "modelo_id": f"{id_novo_modelo}.glb",
         "modelo_3d_url": f"/modelo/{id_novo_modelo}.glb",
-        "node_texturizado": req.node_objeto,
+        "node_texturizado": node_objeto,
         "status": "concluido",
     }
 
