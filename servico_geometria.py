@@ -158,17 +158,29 @@ PADROES_ANOTACAO_TECNICA = [
 ]
 
 
+LIMITE_CARACTERES_NOME_OBJETO = 20  # dado real (05/08): maior nome de móvel/acessório visto até
+                                     # agora tem 19 chars ("TOILET ROLL HOLDER", "BABY CHANGE STATION").
+                                     # Nome de cômodo e frase de instrução passam bem disso
+                                     # ("ACCESSIBLE UNISEX BATHROOM"=26, "EXTENT OF BABY CHANGE
+                                     # STATION WHEN IN USE"=43). Não é lei universal -- é corte
+                                     # calibrado no dado real que já vimos, pode precisar ajuste
+                                     # se aparecer nome de móvel genuinamente longo em outro arquivo.
+
+
 def _e_anotacao_tecnica(nome):
     """Filtro por padrão (lista negra), não por nome conhecido (lista
     branca) -- lista branca faria objeto de vocabulário novo (ex: 'BED'
     numa planta de quarto que nunca vimos) sumir silenciosamente do
     desenho. Isso aqui só remove lixo de anotação técnica óbvio (cota,
-    percentual, cabeçalho de escala/aprovação). NÃO pega tudo -- termo
-    técnico que parece nome de objeto (ex: 'EXCLUSION LINE', 'BACK REST')
-    ainda passa, porque não tem padrão textual que diferencie isso de um
-    nome de móvel real sem olhar a camada (layer) de origem no DXF, que
-    esta função não consulta hoje."""
+    percentual, cabeçalho de escala/aprovação) e texto longo demais pra
+    ser nome de objeto único (nome de cômodo, frase de instrução) --
+    termo técnico curto que parece nome de objeto (ex: 'EXCLUSION LINE',
+    'BACK REST') ainda passa, porque não tem padrão textual que
+    diferencie isso de um nome de móvel real sem olhar a camada (layer)
+    de origem no DXF, que esta função não consulta hoje."""
     nome_limpo = nome.strip()
+    if len(nome_limpo) > LIMITE_CARACTERES_NOME_OBJETO:
+        return True
     return any(re.match(p, nome_limpo, re.IGNORECASE) for p in PADROES_ANOTACAO_TECNICA)
 
 
@@ -328,6 +340,8 @@ async def processar_planta(arquivo: UploadFile = File(...)):
     caixas_objetos_qtd = 0
     for i, o in enumerate(g["objetos_texto"]):
         if o["nome"] in NAO_FISICOS or o["nome"] == g["nome_comodo"]:
+            continue
+        if _e_anotacao_tecnica(o["nome"]):
             continue
         node_name = f"objeto_{i}"
         x, y = o["posicao"][0] * fator, o["posicao"][1] * fator
