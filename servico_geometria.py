@@ -335,7 +335,7 @@ async def processar_planta(arquivo: UploadFile = File(...)):
         })
 
     objetos.append({
-        "id": "piso-0",
+        "id": "piso",
         "tipo": "piso",
         "node": "piso",
     })
