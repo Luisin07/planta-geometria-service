@@ -273,6 +273,23 @@ def _sobreposicao_fracao(l1, dir1, comp1, l2, comp2):
     return sobreposicao / min(comp1, comp2) if min(comp1, comp2) > 0 else 0
 
 
+def _sobreposicao_fracao_e_faixa(l1, dir1, comp1, l2, comp2):
+    """Mesmo cálculo de sobreposição de antes, mas também devolve a FAIXA
+    real de sobreposição (em parâmetro ao longo de l1) -- usada pra
+    construir a linha central certa, em vez de média ingênua de pontas
+    (bug real achado em 10/08: médiar start-com-start/end-com-end direto
+    produz linha torta quando os dois pares têm comprimento bem diferente
+    ou direção invertida entre si)."""
+    def proj(pt):
+        vx, vy = pt[0] - l1["start"][0], pt[1] - l1["start"][1]
+        return vx * dir1[0] + vy * dir1[1]
+    t2 = sorted([proj(l2["start"]), proj(l2["end"])])
+    inicio, fim = max(0, t2[0]), min(comp1, t2[1])
+    sobreposicao = max(0, fim - inicio)
+    fracao = sobreposicao / min(comp1, comp2) if min(comp1, comp2) > 0 else 0
+    return fracao, inicio, fim
+
+
 def mesclar_paredes_duplas(paredes, fator_para_metros,
                             dist_min_m=0.08, dist_max_m=0.25,
                             sobreposicao_min=0.5, comprimento_min_manter_m=0.5):
@@ -281,22 +298,28 @@ def mesclar_paredes_duplas(paredes, fator_para_metros,
     parede, desenhada em linha dupla) numa única parede -- corrige achado
     real (10/08, Two-story-house-410202.dxf): sem isso, cada face vira
     sua própria caixa 3D independente na extrusão, produzindo malha
-    fragmentada em 100+ pedaços desconectados (confirmado, não suposição
-    -- 132 componentes soltos na malha final antes desta correção).
+    fragmentada em 100+ pedaços desconectados (confirmado -- 132
+    componentes soltos na malha final antes desta correção).
+
+    CORRIGIDO (10/08, mesmo dia): a primeira versão construía a linha
+    central com média ingênua de pontas (start1+start2)/2, (end1+end2)/2
+    -- produzia posição/ângulo errado sempre que os dois pares tinham
+    comprimento bem diferente ou direção start->end invertida entre si
+    (contagem de componente melhorou, 132->46, mas posição ficou torta,
+    malha continuou parecendo espalhada na tela). Agora usa a FAIXA REAL
+    de sobreposição projetada na direção da primeira linha, com offset
+    perpendicular de metade da distância medida -- constrói a linha
+    central geometricamente correta, não uma média cega de coordenada.
 
     Calibrado com dado real do mesmo arquivo: pares genuínos de face de
     parede tinham distância perpendicular ~0.157m (quase idêntica em
-    todos os 49 pares encontrados) e sobreposição >=0.5 -- faixa
-    dist_min/dist_max com folga em torno desse valor.
+    todos os 49 pares encontrados) e sobreposição >=0.5.
 
     Linha sem par:
     - Curta (< comprimento_min_manter_m): descartada -- é "tampa"/conector
-      perpendicular fechando visualmente o desenho, não uma parede
-      própria (mesmo achado: essas caps de ~0.15m eram o que causava
-      porta sendo cortada num segmento pequeno demais pra conter o vão).
-    - Longa: mantida como está -- é o comportamento já validado em
-      arquivos de convenção de linha única (banheiro, multi-vista), que
-      não devem ser afetados por essa mudança.
+      perpendicular fechando visualmente o desenho, não uma parede própria.
+    - Longa: mantida como está -- comportamento já validado em arquivos
+      de convenção de linha única (banheiro, multi-vista).
     """
     n = len(paredes)
     dados = [(_direcao_e_comprimento(l), l) for l in paredes]
@@ -309,7 +332,7 @@ def mesclar_paredes_duplas(paredes, fator_para_metros,
         dir_i, comp_i = dados[i][0]
         if dir_i is None:
             continue
-        par_encontrado = None
+        melhor = None
         for j in range(i + 1, n):
             if usadas[j]:
                 continue
@@ -319,30 +342,37 @@ def mesclar_paredes_duplas(paredes, fator_para_metros,
             paralelo = abs(dir_i[0] * dir_j[0] + dir_i[1] * dir_j[1]) > 0.999
             if not paralelo:
                 continue
-            dist = _distancia_perpendicular(dados[i][1], dir_i, dados[j][1]) * fator_para_metros
+            dist_perp_sinalizada = None
+            l2 = dados[j][1]
+            px, py = l2["start"][0] - dados[i][1]["start"][0], l2["start"][1] - dados[i][1]["start"][1]
+            dist_perp_sinalizada = -dir_i[1] * px + dir_i[0] * py  # com sinal, sem abs
+            dist = abs(dist_perp_sinalizada) * fator_para_metros
             if not (dist_min_m <= dist <= dist_max_m):
                 continue
-            sobrep = _sobreposicao_fracao(dados[i][1], dir_i, comp_i, dados[j][1], comp_j)
-            if sobrep >= sobreposicao_min:
-                par_encontrado = j
+            fracao, inicio, fim = _sobreposicao_fracao_e_faixa(dados[i][1], dir_i, comp_i, l2, comp_j)
+            if fracao >= sobreposicao_min:
+                melhor = (j, dist_perp_sinalizada, inicio, fim)
                 break
 
-        if par_encontrado is not None:
-            j = par_encontrado
+        if melhor is not None:
+            j, dist_perp_sinalizada, inicio, fim = melhor
             usadas[i] = usadas[j] = True
-            l1, l2 = dados[i][1], dados[j][1]
-            # Linha central: média das duas pontas correspondentes.
-            # Assume mesma orientação start->end nas duas (válido pro
-            # padrão observado -- se um dia aparecer par invertido, essa
-            # suposição precisa de ajuste, não testado esse caso ainda).
-            centro_start = [(l1["start"][0] + l2["start"][0]) / 2, (l1["start"][1] + l2["start"][1]) / 2]
-            centro_end = [(l1["end"][0] + l2["end"][0]) / 2, (l1["end"][1] + l2["end"][1]) / 2]
+            l1 = dados[i][1]
+            # Ponto na linha 1, no parâmetro dado, ao longo da direção dir_i
+            def ponto_em(t):
+                return [l1["start"][0] + dir_i[0] * t, l1["start"][1] + dir_i[1] * t]
+            p_inicio = ponto_em(inicio)
+            p_fim = ponto_em(fim)
+            # Desloca meio caminho na perpendicular, na direção de l2 (sinal preservado)
+            perp = (-dir_i[1], dir_i[0])
+            meio_offset = dist_perp_sinalizada / 2
+            centro_start = [p_inicio[0] + perp[0] * meio_offset, p_inicio[1] + perp[1] * meio_offset]
+            centro_end = [p_fim[0] + perp[0] * meio_offset, p_fim[1] + perp[1] * meio_offset]
             resultado.append({**l1, "start": centro_start, "end": centro_end})
         else:
             comp_m = comp_i * fator_para_metros
             if comp_m >= comprimento_min_manter_m:
                 resultado.append(dados[i][1])
-            # senão: descarta (artefato curto sem par -- tampa/conector)
             usadas[i] = True
 
     return resultado
