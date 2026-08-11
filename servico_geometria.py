@@ -379,6 +379,8 @@ async def processar_planta(arquivo: UploadFile = File(...)):
     caminho_glb = os.path.join(PASTA_MODELOS, f"{id_modelo}.glb")
     scene.export(caminho_glb)
 
+    deteccao_estruturas = eg.detectar_estruturas_desconectadas(paredes, fator)
+
     return {
         "escala": {"fator_para_metros": fator, "confianca": g["confianca"]},
         "paredes_qtd": len(paredes),
@@ -390,6 +392,17 @@ async def processar_planta(arquivo: UploadFile = File(...)):
         "modelo_id": f"{id_modelo}.glb",  # mesmo valor usado no path de /modelo/{arquivo} e em /aplicar-textura
         "modelo_3d_url": f"/modelo/{id_modelo}.glb",
         "modelo_3d_nos_separados": True,
+        "aviso_multiplas_estruturas": {
+            "nivel": deteccao_estruturas["alerta"],  # "nenhum" | "baixo" | "moderado" | "forte"
+            "grupos_desconectados_qtd": deteccao_estruturas["grupos_qtd"],
+            "menor_gap_entre_maiores_m": deteccao_estruturas["menor_gap_entre_maiores_m"],
+            "mensagem": {
+                "nenhum": None,
+                "baixo": "Detectados pequenos grupos de parede desconectados -- provavelmente cômodos/alas normais, não é alerta forte.",
+                "moderado": "Muitos grupos de parede desconectados detectados. Pode ser desenho com múltiplas vistas (andares, cortes) ou múltiplas unidades na mesma prancha -- considere isolar a região desejada com isolar_regiao.py antes de processar, se o resultado parecer misturado.",
+                "forte": "Grupos de parede fisicamente distantes (vários metros) detectados -- muito provável que este arquivo tenha múltiplas unidades/estruturas na mesma prancha. Recomendado isolar a região desejada com isolar_regiao.py antes de processar.",
+            }[deteccao_estruturas["alerta"]],
+        },
         "status": "concluido",
     }
 

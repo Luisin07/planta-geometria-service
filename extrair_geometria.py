@@ -259,6 +259,127 @@ def extrair_paredes(linhas, fator_para_metros):
 
 
 # ---------------------------------------------------------------------------
+# 3b. Detecção de estruturas desconectadas (candidatas a multiunidade/multi-vista)
+# ---------------------------------------------------------------------------
+
+TOLERANCIA_CONECTIVIDADE_M = 0.1  # calibrado com dado real (10/08): distância entre
+    # parede realmente conectada é ~0 (ruído de ponto flutuante); a faixa 0.05-0.3m
+    # não muda a contagem de grupos, indicando que é uma zona segura -- só acima de
+    # ~1m começa a fundir estruturas que provavelmente são mesmo separadas.
+MIN_SEGMENTOS_ESTRUTURA_SIGNIFICATIVA = 5  # abaixo disso, no dado real testado, os
+    # grupos eram claramente ruído (traço solto, elemento isolado) -- salto visível
+    # na distribuição de tamanho entre grupos de 4 e de 1 segmento.
+GAP_METROS_SEPARACAO_FORTE = 5.0  # separação >= isso entre duas estruturas
+    # significativas é sinal forte de unidade/prédio distinto (dado de referência:
+    # 19,2m confirmado em arquivo real com duas unidades lado a lado). Gap menor
+    # que isso (dado real testado: 0,9-2m) é mais provável ser cômodo/ala dentro
+    # da MESMA estrutura, não prova suficiente sozinha.
+
+
+def detectar_estruturas_desconectadas(paredes, fator_para_metros,
+                                       tolerancia_m=TOLERANCIA_CONECTIVIDADE_M,
+                                       min_segmentos=MIN_SEGMENTOS_ESTRUTURA_SIGNIFICATIVA):
+    """
+    Agrupa segmentos de parede em componentes fisicamente conectados (uma
+    parede "toca" outra se a distância real entre elas, em metros, é menor
+    que a tolerância -- cobre tanto ponta-com-ponta quanto parede interna
+    encostando no meio de uma parede externa).
+
+    Isso NÃO decide sozinho "é multiunidade" -- devolve os dados (quantos
+    grupos significativos existem, envelope de cada um, menor distância
+    entre os maiores) para quem chamar decidir o nível de alerta. Dois
+    sinais são necessários juntos pra sinal forte, um só não basta:
+    (1) mais de um grupo com segmentos suficientes pra ser estrutura de
+    verdade, não ruído -- E (2) esses grupos ficarem fisicamente longe uns
+    dos outros (metros, não centímetros) -- um desenho multi-vista normal
+    (vários cômodos, cortes, plantas de andar diferente na mesma prancha)
+    já fragmenta em dezenas de grupos com gaps pequenos (~1-2m no dado
+    real testado), sem ser prova de unidade duplicada.
+    """
+    from shapely.geometry import LineString, MultiLineString
+
+    linhas_m = [
+        LineString([
+            (p["start"][0] * fator_para_metros, p["start"][1] * fator_para_metros),
+            (p["end"][0] * fator_para_metros, p["end"][1] * fator_para_metros),
+        ])
+        for p in paredes
+    ]
+    n = len(linhas_m)
+    if n == 0:
+        return {"grupos_significativos": [], "alerta": "nenhum"}
+
+    pai = list(range(n))
+
+    def find(x):
+        while pai[x] != x:
+            pai[x] = pai[pai[x]]
+            x = pai[x]
+        return x
+
+    def unir(x, y):
+        rx, ry = find(x), find(y)
+        if rx != ry:
+            pai[rx] = ry
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if linhas_m[i].distance(linhas_m[j]) <= tolerancia_m:
+                unir(i, j)
+
+    grupos_idx = {}
+    for i in range(n):
+        r = find(i)
+        grupos_idx.setdefault(r, []).append(i)
+
+    grupos_significativos = []
+    for indices in grupos_idx.values():
+        if len(indices) < min_segmentos:
+            continue
+        xs = [c for i in indices for c in (linhas_m[i].coords[0][0], linhas_m[i].coords[1][0])]
+        ys = [c for i in indices for c in (linhas_m[i].coords[0][1], linhas_m[i].coords[1][1])]
+        grupos_significativos.append({
+            "segmentos_qtd": len(indices),
+            "indices_paredes": indices,
+            "envelope_m": {
+                "min_x": round(min(xs), 2), "max_x": round(max(xs), 2),
+                "min_y": round(min(ys), 2), "max_y": round(max(ys), 2),
+            },
+            "_uniao": MultiLineString([linhas_m[i] for i in indices]),
+        })
+
+    grupos_significativos.sort(key=lambda g: g["segmentos_qtd"], reverse=True)
+
+    maior_gap_m = None
+    if len(grupos_significativos) >= 2:
+        menor_gap_entre_par = min(
+            grupos_significativos[i]["_uniao"].distance(grupos_significativos[j]["_uniao"])
+            for i in range(len(grupos_significativos))
+            for j in range(i + 1, len(grupos_significativos))
+        )
+        maior_gap_m = round(menor_gap_entre_par, 2)
+
+    for g in grupos_significativos:
+        del g["_uniao"]  # objeto shapely não serializa em JSON, só serviu pro cálculo de distância
+
+    if len(grupos_significativos) <= 1:
+        alerta = "nenhum"
+    elif maior_gap_m is not None and maior_gap_m >= GAP_METROS_SEPARACAO_FORTE:
+        alerta = "forte"  # gap grande confirmado -- muito provável unidade/prédio distinto
+    elif len(grupos_significativos) >= 4:
+        alerta = "moderado"  # muitos grupos desconectados, mesmo sem um gap enorme -- vale checar
+    else:
+        alerta = "baixo"  # poucos grupos, gap pequeno -- provavelmente só cômodos/ala da mesma estrutura
+
+    return {
+        "grupos_significativos": grupos_significativos,
+        "grupos_qtd": len(grupos_significativos),
+        "menor_gap_entre_maiores_m": maior_gap_m,
+        "alerta": alerta,
+    }
+
+
+# ---------------------------------------------------------------------------
 # 4. Detecção de porta
 # ---------------------------------------------------------------------------
 
