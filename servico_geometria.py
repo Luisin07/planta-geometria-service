@@ -307,6 +307,56 @@ async def processar_planta(arquivo: UploadFile = File(...)):
     TAMANHO_PADRAO_OBJETO = (0.2, 0.2, 0.2)
 
     # ------------------------------------------------------------------
+    # BIBLIOTECA_OBJETOS -- DESENHO ARQUITETURAL, NÃO TESTADO COM ASSET
+    # REAL (10/08). Estrutura pronta pra receber modelo .glb real (Meshy,
+    # pendente de aprovação de assinatura) no lugar da caixa genérica.
+    #
+    # Decisão de onde os arquivos ficam: dentro do próprio repositório
+    # deste serviço (pasta biblioteca_objetos/), não no Supabase Storage
+    # do Lovable -- porque o Render não tem (e não deveria ter, decisão
+    # de 05/08) credencial pra acessar o Storage do Lovable Cloud
+    # diretamente. Biblioteca compartilhada entre TODOS os clientes (não
+    # é dado por usuário), então faz sentido morar junto do código, versionada.
+    #
+    # LIMITAÇÃO CONHECIDA, NÃO RESOLVIDA: rotação. Objeto de verdade (vaso,
+    # espelho) tem "frente" -- caixa genérica não liga pra isso, modelo
+    # real precisa estar de frente pro ambiente certo. Hoje a detecção de
+    # objeto vem só de TEXTO próximo (nome do móvel escrito no DXF), sem
+    # captar ângulo de inserção nenhum. Pra rotação de verdade, precisaria
+    # detectar o objeto via BLOCO nomeado do DXF (que carrega ângulo de
+    # inserção), não texto solto -- isso é mudança de método de detecção,
+    # não só de renderização, e não está resolvida aqui. Por enquanto,
+    # todo objeto de biblioteca entra com rotação 0 (mesma limitação que
+    # já existe pra porta detectada por arco, ver seção 6 do documento).
+    # ------------------------------------------------------------------
+    BIBLIOTECA_OBJETOS = {
+        # "TOILET": {"arquivo": "biblioteca_objetos/toilet.glb", "escala_alvo": "altura"},
+        # Vazio de propósito até ter asset real curado -- fallback abaixo
+        # garante que isso não quebra nada enquanto estiver vazio.
+    }
+
+    def _criar_geometria_objeto(nome, dx, dy, dz):
+        """
+        Tenta biblioteca de modelo real primeiro; cai pra caixa genérica
+        se o tipo não estiver na biblioteca OU o arquivo não existir no
+        disco (fallback duplo, de propósito -- nunca quebra o pipeline
+        por causa de asset faltando ou mal configurado).
+        """
+        entrada = BIBLIOTECA_OBJETOS.get(nome)
+        if entrada:
+            caminho_asset = entrada["arquivo"]
+            if os.path.exists(caminho_asset):
+                malha = trimesh.load(caminho_asset, force="mesh")
+                # Escala uniforme (preserva proporção real do asset) pela
+                # maior dimensão -- decisão não validada com asset real
+                # ainda, pode precisar ajuste quando houver modelo de
+                # verdade pra comparar visualmente.
+                escala = max(dx, dy, dz) / max(malha.extents)
+                malha.apply_scale(escala)
+                return malha
+        return trimesh.creation.box(extents=[dx, dy, dz])
+
+    # ------------------------------------------------------------------
     # Monta a cena com NÓS SEPARADOS (contrato confirmado com o app):
     # - paredes: nó próprio, um objeto por segmento na lista "objetos"
     #   (todos apontando pro mesmo node "paredes" -- parede continua
@@ -362,7 +412,13 @@ async def processar_planta(arquivo: UploadFile = File(...)):
         node_name = f"objeto_{i}"
         x, y = o["posicao"][0] * fator, o["posicao"][1] * fator
         dx, dy, dz = TAMANHOS_OBJETO.get(o["nome"], TAMANHO_PADRAO_OBJETO)
-        caixa = trimesh.creation.box(extents=[dx, dy, dz])
+        caixa = _criar_geometria_objeto(o["nome"], dx, dy, dz)
+        # ATENÇÃO (10/08, não resolvido): assume que a geometria está
+        # centralizada na origem (verdade pra trimesh.creation.box(), não
+        # necessariamente verdade pra um asset carregado de arquivo -- um
+        # modelo real pode ter a origem na base, não no centro). Só
+        # importa quando BIBLIOTECA_OBJETOS tiver entrada de verdade;
+        # validar visualmente assim que houver o primeiro asset real.
         caixa.apply_translation([x, y, dz / 2])
         scene.add_geometry(caixa, node_name=node_name)
         caixas_objetos_qtd += 1
