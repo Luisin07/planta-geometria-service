@@ -57,8 +57,21 @@ def _dividir_segmento_com_porta(p1, p2, t_hinge, largura, comprimento):
     return subsegs
 
 
-def dividir_paredes_pelas_portas(paredes, portas, limiar_proximidade_m=0.15):
-    """Associa cada porta à parede mais próxima e recorta o vão."""
+def dividir_paredes_pelas_portas(paredes, portas, limiar_proximidade_m=0.5):
+    """
+    NOTA (10/08): limiar era 0.15m -- calibrado pra parede desenhada como
+    linha única (porta encostada na linha central, distância ~0). Achado
+    real, testando contra arquivo com parede desenhada como DUAS linhas
+    paralelas (cada face, 0.15m de espessura -- Two-story-house-410202.dxf):
+    todas as 5 portas detectadas por bloco ficavam entre 0.2m e 0.4m da
+    parede mais próxima, ACIMA do limiar antigo -- ou seja, o corte nunca
+    acontecia, silenciosamente, sem nenhum aviso. Aumentado pra 0.5m,
+    com margem sobre o pior caso observado (0.4m). Ainda conservador o
+    suficiente pra não associar porta a parede errada em planta densa
+    (a escolha de QUAL parede é sempre "a mais próxima", o limiar só
+    decide se aceita ou descarta esse match -- alargar não muda qual
+    parede é escolhida, só evita descartar um match legítimo por engano).
+    """
     linhas_shapely = [LineString([l["start"], l["end"]]) for l in paredes]
 
     portas_por_segmento = {}

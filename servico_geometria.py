@@ -218,6 +218,7 @@ def _extrair_geometria_completa(caminho_dxf):
     fator, confianca, explicacao = eg.detectar_escala(doc, arcos)
     paredes, paredes_amplas, metodo_parede = eg.extrair_paredes(linhas, fator)
     portas = eg.detectar_portas(doc, arcos, paredes_amplas, fator, paredes_envelope=paredes)
+    portas += eg.detectar_portas_correr(doc, paredes, fator)
 
     paredes_m = [{"start": [p * fator for p in l["start"]], "end": [p * fator for p in l["end"]]} for l in paredes]
     portas_m = [{**p, "posicao": [c * fator for c in p["posicao"]]} for p in portas]

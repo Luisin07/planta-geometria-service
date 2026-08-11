@@ -501,6 +501,107 @@ def detectar_portas(doc, arcos, paredes, fator_para_metros, margem_envelope_m=0.
     return portas
 
 
+PALAVRAS_CHAVE_PORTA_CORRER = ["SLIDING DOOR", "SLIDING", "PORTA DE CORRER", "PORTA CORRER"]
+
+
+def detectar_portas_correr(doc, paredes, fator_para_metros, raio_busca_m=2.5,
+                            largura_min_m=0.5, largura_max_m=3.0):
+    """
+    Detecta porta de correr -- método diferente de detectar_portas() porque
+    porta de correr NÃO tem arco de giro (não tem dobradiça), então o
+    método baseado em arco nunca pega esse tipo. Confirmado com dado real
+    (10/08, Two-story-house-410202.dxf): porta de correr aparece como um
+    GAP real entre duas pontas de parede colineares (mesma linha), sem
+    nenhum arco nem bloco nomeado por perto -- só ausência de material.
+
+    Estratégia: acha texto com palavra-chave de porta de correr (única
+    pista confiável -- geometria pura de "gap na parede" sozinha teria
+    risco alto de falso positivo em qualquer canto/junção normal de
+    parede), e procura, perto dessa etiqueta, um par de segmentos de
+    parede colineares com um vão real entre as pontas mais próximas.
+
+    Retorna lista no MESMO formato de detectar_portas() (chaves
+    "metodo", "posicao", "largura_estimada_m") -- pensado pra ser somado
+    à lista de detectar_portas(), não substituir, e fluir pelo mesmo
+    pipeline existente (dividir_paredes_pelas_portas, gerar_porta_3d)
+    sem precisar de lógica nova lá.
+    """
+    msp = doc.modelspace()
+    raio_bruto = raio_busca_m / fator_para_metros
+
+    posicoes_texto = []
+    for e in msp:
+        if e.dxftype() not in ("TEXT", "MTEXT"):
+            continue
+        texto = (_texto_entidade(e) or "").strip().upper()
+        if any(chave in texto for chave in PALAVRAS_CHAVE_PORTA_CORRER):
+            pos = _posicao_entidade_texto(e)
+            if pos:
+                posicoes_texto.append(pos)
+
+    portas_correr = []
+    TOLERANCIA_COLINEAR = 0.01 / fator_para_metros  # ~1cm em metros reais
+
+    for tx, ty in posicoes_texto:
+        candidatos = [
+            l for l in paredes
+            if _dist_ponto_segmento((tx, ty), l["start"], l["end"]) <= raio_bruto
+        ]
+
+        melhor_gap = None
+        for i in range(len(candidatos)):
+            for j in range(i + 1, len(candidatos)):
+                a, b = candidatos[i], candidatos[j]
+                # Colinear horizontal: mesmo Y nas duas pontas de cada segmento
+                if (abs(a["start"][1] - a["end"][1]) < TOLERANCIA_COLINEAR and
+                        abs(b["start"][1] - b["end"][1]) < TOLERANCIA_COLINEAR and
+                        abs(a["start"][1] - b["start"][1]) < TOLERANCIA_COLINEAR):
+                    y_linha = a["start"][1]
+                    xs_a = sorted([a["start"][0], a["end"][0]])
+                    xs_b = sorted([b["start"][0], b["end"][0]])
+                    if xs_a[1] <= xs_b[0]:
+                        gap = xs_b[0] - xs_a[1]
+                        centro = ((xs_a[1] + xs_b[0]) / 2, y_linha)
+                    elif xs_b[1] <= xs_a[0]:
+                        gap = xs_a[0] - xs_b[1]
+                        centro = ((xs_b[1] + xs_a[0]) / 2, y_linha)
+                    else:
+                        continue  # se sobrepõem, não é gap
+                    gap_m = gap * fator_para_metros
+                    if largura_min_m <= gap_m <= largura_max_m:
+                        if melhor_gap is None or gap_m < melhor_gap[0]:
+                            melhor_gap = (gap_m, centro)
+                # Colinear vertical: mesmo X nas duas pontas de cada segmento
+                elif (abs(a["start"][0] - a["end"][0]) < TOLERANCIA_COLINEAR and
+                        abs(b["start"][0] - b["end"][0]) < TOLERANCIA_COLINEAR and
+                        abs(a["start"][0] - b["start"][0]) < TOLERANCIA_COLINEAR):
+                    x_linha = a["start"][0]
+                    ys_a = sorted([a["start"][1], a["end"][1]])
+                    ys_b = sorted([b["start"][1], b["end"][1]])
+                    if ys_a[1] <= ys_b[0]:
+                        gap = ys_b[0] - ys_a[1]
+                        centro = (x_linha, (ys_a[1] + ys_b[0]) / 2)
+                    elif ys_b[1] <= ys_a[0]:
+                        gap = ys_a[0] - ys_b[1]
+                        centro = (x_linha, (ys_b[1] + ys_a[0]) / 2)
+                    else:
+                        continue
+                    gap_m = gap * fator_para_metros
+                    if largura_min_m <= gap_m <= largura_max_m:
+                        if melhor_gap is None or gap_m < melhor_gap[0]:
+                            melhor_gap = (gap_m, centro)
+
+        if melhor_gap:
+            largura_m, centro = melhor_gap
+            portas_correr.append({
+                "metodo": "texto+gap (porta de correr)",
+                "posicao": list(centro),
+                "largura_estimada_m": round(largura_m, 3),
+            })
+
+    return portas_correr
+
+
 # ---------------------------------------------------------------------------
 # 5. Detecção de objeto/móvel via texto (MTEXT/TEXT)
 # ---------------------------------------------------------------------------
