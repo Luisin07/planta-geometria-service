@@ -291,7 +291,21 @@ async def processar_planta(arquivo: UploadFile = File(...)):
     paredes, portas = g["paredes"], g["portas"]
     fator = g["fator"]
 
-    mesh_paredes = g3d.gerar_paredes_3d(g["segmentos_m"], espessura_m=ESPESSURA_PAREDE_M, altura_m=ALTURA_PAREDE_M)
+    # NOTA (10/08): fusão de parede em linha dupla aplicada SÓ aqui, no
+    # pipeline 3D -- não no /gerar-2d, que já funciona bem com a lista
+    # original e não foi testado com essa mudança ainda. Achado real:
+    # sem isso, cada face de parede desenhada em linha dupla vira sua
+    # própria caixa 3D, fragmentando a malha em 100+ pedaços
+    # desconectados (confirmado: Two-story-house-410202.dxf, 132
+    # componentes soltos -> 46 depois da fusão).
+    paredes_fundidas = eg.mesclar_paredes_duplas(paredes, fator)
+    paredes_fundidas_m = [
+        {"start": [p * fator for p in l["start"]], "end": [p * fator for p in l["end"]]}
+        for l in paredes_fundidas
+    ]
+    segmentos_3d, _ = g3d.dividir_paredes_pelas_portas(paredes_fundidas_m, g["portas_m"])
+
+    mesh_paredes = g3d.gerar_paredes_3d(segmentos_3d, espessura_m=ESPESSURA_PAREDE_M, altura_m=ALTURA_PAREDE_M)
     piso = g3d.gerar_piso(g["paredes_m"])
     # NOTA (10/08): parede e piso eram fundidos num nó único ("paredes")
     # antes desta mudança -- impedia dar cor/textura no piso sem afetar a

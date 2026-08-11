@@ -249,6 +249,105 @@ def extrair_paredes_por_grafo(linhas, fator_para_metros, corte_metros=0.08, tole
     return paredes_finais, paredes_amplas
 
 
+def _direcao_e_comprimento(l):
+    dx = l["end"][0] - l["start"][0]
+    dy = l["end"][1] - l["start"][1]
+    comp = math.hypot(dx, dy)
+    if comp < 1e-9:
+        return None, 0
+    return (dx / comp, dy / comp), comp
+
+
+def _distancia_perpendicular(l1, dir1, l2):
+    px, py = l2["start"][0] - l1["start"][0], l2["start"][1] - l1["start"][1]
+    return abs(-dir1[1] * px + dir1[0] * py)
+
+
+def _sobreposicao_fracao(l1, dir1, comp1, l2, comp2):
+    def proj(pt):
+        vx, vy = pt[0] - l1["start"][0], pt[1] - l1["start"][1]
+        return vx * dir1[0] + vy * dir1[1]
+    t2 = sorted([proj(l2["start"]), proj(l2["end"])])
+    inicio, fim = max(0, t2[0]), min(comp1, t2[1])
+    sobreposicao = max(0, fim - inicio)
+    return sobreposicao / min(comp1, comp2) if min(comp1, comp2) > 0 else 0
+
+
+def mesclar_paredes_duplas(paredes, fator_para_metros,
+                            dist_min_m=0.08, dist_max_m=0.25,
+                            sobreposicao_min=0.5, comprimento_min_manter_m=0.5):
+    """
+    Funde pares de linhas paralelas próximas (as duas FACES da mesma
+    parede, desenhada em linha dupla) numa única parede -- corrige achado
+    real (10/08, Two-story-house-410202.dxf): sem isso, cada face vira
+    sua própria caixa 3D independente na extrusão, produzindo malha
+    fragmentada em 100+ pedaços desconectados (confirmado, não suposição
+    -- 132 componentes soltos na malha final antes desta correção).
+
+    Calibrado com dado real do mesmo arquivo: pares genuínos de face de
+    parede tinham distância perpendicular ~0.157m (quase idêntica em
+    todos os 49 pares encontrados) e sobreposição >=0.5 -- faixa
+    dist_min/dist_max com folga em torno desse valor.
+
+    Linha sem par:
+    - Curta (< comprimento_min_manter_m): descartada -- é "tampa"/conector
+      perpendicular fechando visualmente o desenho, não uma parede
+      própria (mesmo achado: essas caps de ~0.15m eram o que causava
+      porta sendo cortada num segmento pequeno demais pra conter o vão).
+    - Longa: mantida como está -- é o comportamento já validado em
+      arquivos de convenção de linha única (banheiro, multi-vista), que
+      não devem ser afetados por essa mudança.
+    """
+    n = len(paredes)
+    dados = [(_direcao_e_comprimento(l), l) for l in paredes]
+    usadas = [False] * n
+    resultado = []
+
+    for i in range(n):
+        if usadas[i]:
+            continue
+        dir_i, comp_i = dados[i][0]
+        if dir_i is None:
+            continue
+        par_encontrado = None
+        for j in range(i + 1, n):
+            if usadas[j]:
+                continue
+            dir_j, comp_j = dados[j][0]
+            if dir_j is None:
+                continue
+            paralelo = abs(dir_i[0] * dir_j[0] + dir_i[1] * dir_j[1]) > 0.999
+            if not paralelo:
+                continue
+            dist = _distancia_perpendicular(dados[i][1], dir_i, dados[j][1]) * fator_para_metros
+            if not (dist_min_m <= dist <= dist_max_m):
+                continue
+            sobrep = _sobreposicao_fracao(dados[i][1], dir_i, comp_i, dados[j][1], comp_j)
+            if sobrep >= sobreposicao_min:
+                par_encontrado = j
+                break
+
+        if par_encontrado is not None:
+            j = par_encontrado
+            usadas[i] = usadas[j] = True
+            l1, l2 = dados[i][1], dados[j][1]
+            # Linha central: média das duas pontas correspondentes.
+            # Assume mesma orientação start->end nas duas (válido pro
+            # padrão observado -- se um dia aparecer par invertido, essa
+            # suposição precisa de ajuste, não testado esse caso ainda).
+            centro_start = [(l1["start"][0] + l2["start"][0]) / 2, (l1["start"][1] + l2["start"][1]) / 2]
+            centro_end = [(l1["end"][0] + l2["end"][0]) / 2, (l1["end"][1] + l2["end"][1]) / 2]
+            resultado.append({**l1, "start": centro_start, "end": centro_end})
+        else:
+            comp_m = comp_i * fator_para_metros
+            if comp_m >= comprimento_min_manter_m:
+                resultado.append(dados[i][1])
+            # senão: descarta (artefato curto sem par -- tampa/conector)
+            usadas[i] = True
+
+    return resultado
+
+
 def extrair_paredes(linhas, fator_para_metros):
     layer, qtd = achar_layer_parede(linhas)
     if layer:
