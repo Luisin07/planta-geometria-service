@@ -292,7 +292,13 @@ async def processar_planta(arquivo: UploadFile = File(...)):
 
     mesh_paredes = g3d.gerar_paredes_3d(g["segmentos_m"], espessura_m=ESPESSURA_PAREDE_M, altura_m=ALTURA_PAREDE_M)
     piso = g3d.gerar_piso(g["paredes_m"])
-    mesh_paredes_piso = trimesh.util.concatenate([mesh_paredes, piso])
+    # NOTA (10/08): parede e piso eram fundidos num nó único ("paredes")
+    # antes desta mudança -- impedia dar cor/textura no piso sem afetar a
+    # parede junto (e vice-versa). Separados em dois nós agora, cada um
+    # endereçável independente. Decisão consciente de não separar POR
+    # SEGMENTO de parede ainda (arquitetos veem parede como bloco único,
+    # confirmado com a dona do projeto em 04/08 -- ver documento de
+    # retomada, seção 6) -- só parede-vs-piso, não parede-vs-parede.
 
     TAMANHOS_OBJETO = {
         "TOILET": (0.4, 0.4, 0.4), "MIRROR": (0.5, 0.05, 0.6), "MIXER": (0.15, 0.15, 0.2),
@@ -302,14 +308,18 @@ async def processar_planta(arquivo: UploadFile = File(...)):
 
     # ------------------------------------------------------------------
     # Monta a cena com NÓS SEPARADOS (contrato confirmado com o app):
-    # - paredes + piso fundidos num único nó "paredes"
+    # - paredes: nó próprio, um objeto por segmento na lista "objetos"
+    #   (todos apontando pro mesmo node "paredes" -- parede continua
+    #   bloco único visualmente, só não funde mais com o piso)
+    # - piso: nó próprio, endereçável, um item só na lista "objetos"
     # - cada porta é seu próprio nó
     # - cada objeto/móvel é seu próprio nó
     # Cada item do array "objetos" da resposta carrega um campo "node" com
     # o nome LITERAL do nó no .glb -- o app casa por esse nome, sem adivinhar.
     # ------------------------------------------------------------------
     scene = trimesh.Scene()
-    scene.add_geometry(mesh_paredes_piso, node_name="paredes")
+    scene.add_geometry(mesh_paredes, node_name="paredes")
+    scene.add_geometry(piso, node_name="piso")
 
     objetos = []
 
@@ -323,6 +333,12 @@ async def processar_planta(arquivo: UploadFile = File(...)):
             "x2": round(l["end"][0] * fator, 4),
             "y2": round(l["end"][1] * fator, 4),
         })
+
+    objetos.append({
+        "id": "piso-0",
+        "tipo": "piso",
+        "node": "piso",
+    })
 
     for i, p in enumerate(portas):
         node_name = f"porta_{i}"
