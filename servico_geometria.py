@@ -352,14 +352,14 @@ async def processar_planta(arquivo: UploadFile = File(...)):
     # detecção por bloco nomeado do DXF (não construído), objeto entra
     # sempre virado numa direção fixa por enquanto.
     # ------------------------------------------------------------------
-    # DESATIVADO TEMPORARIAMENTE (11/08, à noite): serviço entrou em crash
-    # loop repetido em produção logo após esse arquivo ser adicionado.
-    # Suspeita forte: textura de 4096x4096 do toilet.glb (28MB no total)
-    # estourando os 512MB de RAM do plano Starter ao processar planta com
-    # objeto TOILET. Revertido pra restaurar estabilidade primeiro,
-    # investigar/reduzir textura depois, sem pressão de serviço fora do ar.
+    # REATIVADO (11/08, à noite) -- textura reduzida de 3x 4096x4096 (26.9MB)
+    # pra 3x 1024x1024 (2.8MB), suspeita de causa do OOM que derrubou o
+    # serviço. Geometria/UV/proporção confirmados intactos após a redução
+    # (mesmo vertices/faces/extents de antes). Testar com cautela em
+    # produção -- ainda não confirmado que resolve o crash, só que reduz
+    # bastante o footprint de memória que era a suspeita principal.
     BIBLIOTECA_OBJETOS = {
-        # "TOILET": {"arquivo": "biblioteca_objetos/toilet.glb"},
+        "TOILET": {"arquivo": "biblioteca_objetos/toilet.glb"},
     }
 
     def _converter_y_up_para_z_up(malha):
