@@ -352,12 +352,13 @@ async def processar_planta(arquivo: UploadFile = File(...)):
     # detecção por bloco nomeado do DXF (não construído), objeto entra
     # sempre virado numa direção fixa por enquanto.
     # ------------------------------------------------------------------
-    # REATIVADO (11/08, à noite) -- textura reduzida de 3x 4096x4096 (26.9MB)
-    # pra 3x 1024x1024 (2.8MB), suspeita de causa do OOM que derrubou o
-    # serviço. Geometria/UV/proporção confirmados intactos após a redução
-    # (mesmo vertices/faces/extents de antes). Testar com cautela em
-    # produção -- ainda não confirmado que resolve o crash, só que reduz
-    # bastante o footprint de memória que era a suspeita principal.
+    # REATIVADO (11/08, à noite, tentativa 2) -- log do Render revelou que
+    # o crash acontecia DEPOIS de "200 OK" logado (provável estouro de
+    # memória bem no final, montando/enviando a resposta), não durante o
+    # processamento em si. Reduzir só a textura de cor pra 1024 não foi
+    # suficiente (crashou de novo). Agora: removidas as texturas de
+    # rugosidade metálica e normal (pouco impacto visual num objeto visto
+    # à distância numa planta), cor reduzida pra 512x512 -- 26.9MB -> 0.66MB.
     BIBLIOTECA_OBJETOS = {
         "TOILET": {"arquivo": "biblioteca_objetos/toilet.glb"},
     }
