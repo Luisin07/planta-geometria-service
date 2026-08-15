@@ -316,15 +316,18 @@ async def processar_planta(arquivo: UploadFile = File(...)):
     # retomada, seção 6) -- só parede-vs-piso, não parede-vs-parede.
 
     TAMANHOS_OBJETO = {
-        "TOILET": (0.4, 0.4, 0.4), "MIRROR": (0.5, 0.05, 0.6), "MIXER": (0.15, 0.15, 0.2),
+        # TOILET atualizado (11/08) com proporção real, calibrada contra o
+        # primeiro asset real da biblioteca (Meshy) -- era um cubo grosseiro
+        # (0.4,0.4,0.4) antes de ter referência real pra calibrar contra.
+        "TOILET": (0.41, 0.72, 0.75), "MIRROR": (0.5, 0.05, 0.6), "MIXER": (0.15, 0.15, 0.2),
         "BASIN": (0.5, 0.4, 0.15), "GRAB RAIL": (0.05, 0.4, 0.05), "HOOK": (0.05, 0.05, 0.05),
     }
     TAMANHO_PADRAO_OBJETO = (0.2, 0.2, 0.2)
 
     # ------------------------------------------------------------------
-    # BIBLIOTECA_OBJETOS -- DESENHO ARQUITETURAL, NÃO TESTADO COM ASSET
-    # REAL (10/08). Estrutura pronta pra receber modelo .glb real (Meshy,
-    # pendente de aprovação de assinatura) no lugar da caixa genérica.
+    # BIBLIOTECA_OBJETOS -- primeira entrada REAL hoje (11/08): TOILET,
+    # gerado no Meshy, remesh pra ~9.6k faces (original tinha ~2 milhões,
+    # inviável), curado e testado.
     #
     # Decisão de onde os arquivos ficam: dentro do próprio repositório
     # deste serviço (pasta biblioteca_objetos/), não no Supabase Storage
@@ -333,22 +336,32 @@ async def processar_planta(arquivo: UploadFile = File(...)):
     # diretamente. Biblioteca compartilhada entre TODOS os clientes (não
     # é dado por usuário), então faz sentido morar junto do código, versionada.
     #
-    # LIMITAÇÃO CONHECIDA, NÃO RESOLVIDA: rotação. Objeto de verdade (vaso,
-    # espelho) tem "frente" -- caixa genérica não liga pra isso, modelo
-    # real precisa estar de frente pro ambiente certo. Hoje a detecção de
-    # objeto vem só de TEXTO próximo (nome do móvel escrito no DXF), sem
-    # captar ângulo de inserção nenhum. Pra rotação de verdade, precisaria
-    # detectar o objeto via BLOCO nomeado do DXF (que carrega ângulo de
-    # inserção), não texto solto -- isso é mudança de método de detecção,
-    # não só de renderização, e não está resolvida aqui. Por enquanto,
-    # todo objeto de biblioteca entra com rotação 0 (mesma limitação que
-    # já existe pra porta detectada por arco, ver seção 6 do documento).
+    # ACHADO REAL (11/08): o asset do Meshy vem em convenção Y-up (Y é
+    # "altura" -- confirmado visualmente, projetando a nuvem de vértices
+    # e reconhecendo a silhueta do vaso de lado no plano XZ). Este
+    # serviço trabalha inteiro em Z-up (convenção CAD). Sem converter,
+    # o objeto entraria deitado na cena -- mesma categoria de bug do
+    # Z-up/Y-up resolvido ontem pro modelo inteiro, agora no nível do
+    # objeto individual. Conversão: (x,y,z) -> (x,-z,y), rotação de
+    # verdade (determinante +1, não espelha), confirmada visualmente
+    # antes de aplicar.
+    #
+    # LIMITAÇÃO CONHECIDA, NÃO RESOLVIDA: rotação de FRENTE do objeto.
+    # A conversão de eixo acima resolve "objeto em pé", não "objeto
+    # virado pro lado certo do ambiente" -- isso continua exigindo
+    # detecção por bloco nomeado do DXF (não construído), objeto entra
+    # sempre virado numa direção fixa por enquanto.
     # ------------------------------------------------------------------
     BIBLIOTECA_OBJETOS = {
-        # "TOILET": {"arquivo": "biblioteca_objetos/toilet.glb", "escala_alvo": "altura"},
-        # Vazio de propósito até ter asset real curado -- fallback abaixo
-        # garante que isso não quebra nada enquanto estiver vazio.
+        "TOILET": {"arquivo": "biblioteca_objetos/toilet.glb"},
     }
+
+    def _converter_y_up_para_z_up(malha):
+        """(x,y,z) -> (x,-z,y) -- confirmado visualmente (11/08) que o
+        asset do Meshy é Y-up; este serviço é Z-up inteiro."""
+        v = malha.vertices.copy()
+        malha.vertices = np.column_stack([v[:, 0], -v[:, 2], v[:, 1]])
+        return malha
 
     def _criar_geometria_objeto(nome, dx, dy, dz):
         """
@@ -362,6 +375,7 @@ async def processar_planta(arquivo: UploadFile = File(...)):
             caminho_asset = entrada["arquivo"]
             if os.path.exists(caminho_asset):
                 malha = trimesh.load(caminho_asset, force="mesh")
+                malha = _converter_y_up_para_z_up(malha)
                 # Escala uniforme (preserva proporção real do asset) pela
                 # maior dimensão -- decisão não validada com asset real
                 # ainda, pode precisar ajuste quando houver modelo de
