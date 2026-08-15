@@ -352,15 +352,14 @@ async def processar_planta(arquivo: UploadFile = File(...)):
     # detecção por bloco nomeado do DXF (não construído), objeto entra
     # sempre virado numa direção fixa por enquanto.
     # ------------------------------------------------------------------
-    # REATIVADO (11/08, à noite, tentativa 2) -- log do Render revelou que
-    # o crash acontecia DEPOIS de "200 OK" logado (provável estouro de
-    # memória bem no final, montando/enviando a resposta), não durante o
-    # processamento em si. Reduzir só a textura de cor pra 1024 não foi
-    # suficiente (crashou de novo). Agora: removidas as texturas de
-    # rugosidade metálica e normal (pouco impacto visual num objeto visto
-    # à distância numa planta), cor reduzida pra 512x512 -- 26.9MB -> 0.66MB.
+    # DESATIVADO DE NOVO (11/08, à noite, 3a tentativa falhou): mesmo com
+    # 0.66MB (40x menor que o original), o crash se repetiu. CONFIRMADO:
+    # tamanho de arquivo/textura NÃO é a causa real -- hipótese estava
+    # errada desde o início. Precisa reproduzir localmente, com o fluxo
+    # completo de verdade (não só a função isolada), antes de tentar de
+    # novo em produção.
     BIBLIOTECA_OBJETOS = {
-        "TOILET": {"arquivo": "biblioteca_objetos/toilet.glb"},
+        # "TOILET": {"arquivo": "biblioteca_objetos/toilet.glb"},
     }
 
     def _converter_y_up_para_z_up(malha):
