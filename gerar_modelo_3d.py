@@ -30,6 +30,50 @@ from shapely.geometry import LineString, Point
 import trimesh
 
 
+# ------------------------------------------------------------------
+# MATERIAIS_BASE (16/08) -- Etapa B do fix de "modelo 3D sem contraste"
+# (a Lovable identificou, com o .glb inspecionado direto, que 17 dos 18
+# primitivos saíam sem material nenhum -- todos caindo no material
+# "Default" branco liso do glTF, indistinguíveis entre si e do fundo).
+# Etapa A (já em produção do lado do app) resolvia isso no
+# pós-processamento do Lovable (glb-tint.server.ts); esta é a Etapa B,
+# combinada com eles: o próprio serviço passa a exportar já com
+# material por tipo de nó. Quando isso estiver validado ponta a ponta,
+# o pós-processamento do app vira no-op sozinho (só aplica quando o
+# primitivo ainda não tem material -- não removemos nada do lado deles).
+#
+# NOTA: os valores de cor abaixo são um ponto de partida razoável, não
+# os valores exatos que a Lovable usou no MATERIAIS_BASE deles -- para
+# paridade visual entre o .glb "cru" deste serviço e o que o app já
+# gerava antes, os hex precisam ser sincronizados com eles depois
+# (pendência registrada no documento de continuidade, não decisão
+# unilateral deste lado).
+# ------------------------------------------------------------------
+MATERIAIS_BASE = {
+    "paredes": {"cor_rgb": (214, 214, 219), "roughness": 0.85},  # cinza claro levemente saturado
+    "piso": {"cor_rgb": (120, 98, 84), "roughness": 0.6},         # tom mais escuro/quente
+    "porta": {"cor_rgb": (150, 110, 70), "roughness": 0.5},       # tom de madeira neutro
+    "objeto": {"cor_rgb": (176, 190, 197), "roughness": 0.4},     # tom de destaque neutro
+}
+
+
+def aplicar_material_base(malha, categoria):
+    """Atribui um material PBR uniforme (sem textura) a uma malha gerada
+    localmente (caixa/extrusão), pela categoria do nó. NÃO usar em malha
+    carregada de asset real (ex: biblioteca_objetos/*.glb) -- isso
+    sobrescreveria a textura própria do asset. Chamado só nos
+    fallbacks de geometria genérica."""
+    cfg = MATERIAIS_BASE[categoria]
+    r, g, b = cfg["cor_rgb"]
+    material = trimesh.visual.material.PBRMaterial(
+        baseColorFactor=[r / 255, g / 255, b / 255, 1.0],
+        roughnessFactor=cfg["roughness"],
+        metallicFactor=0.0,
+    )
+    malha.visual = trimesh.visual.TextureVisuals(material=material)
+    return malha
+
+
 def _comprimento(l):
     x1, y1 = l["start"]
     x2, y2 = l["end"]

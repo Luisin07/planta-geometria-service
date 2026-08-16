@@ -307,7 +307,9 @@ async def processar_planta(arquivo: UploadFile = File(...)):
     segmentos_3d, _ = g3d.dividir_paredes_pelas_portas(paredes_fundidas_m, g["portas_m"])
 
     mesh_paredes = g3d.gerar_paredes_3d(segmentos_3d, espessura_m=ESPESSURA_PAREDE_M, altura_m=ALTURA_PAREDE_M)
+    g3d.aplicar_material_base(mesh_paredes, "paredes")
     piso = g3d.gerar_piso(g["paredes_m"])
+    g3d.aplicar_material_base(piso, "piso")
     # NOTA (10/08): parede e piso eram fundidos num nó único ("paredes")
     # antes desta mudança -- impedia dar cor/textura no piso sem afetar a
     # parede junto (e vice-versa). Separados em dois nós agora, cada um
@@ -389,8 +391,10 @@ async def processar_planta(arquivo: UploadFile = File(...)):
                 # verdade pra comparar visualmente.
                 escala = max(dx, dy, dz) / max(malha.extents)
                 malha.apply_scale(escala)
-                return malha
-        return trimesh.creation.box(extents=[dx, dy, dz])
+                return malha  # asset real: preserva a textura própria, não aplica material base
+        caixa = trimesh.creation.box(extents=[dx, dy, dz])
+        g3d.aplicar_material_base(caixa, "objeto")
+        return caixa
 
     # ------------------------------------------------------------------
     # Monta a cena com NÓS SEPARADOS (contrato confirmado com o app):
@@ -429,6 +433,7 @@ async def processar_planta(arquivo: UploadFile = File(...)):
     for i, p in enumerate(portas):
         node_name = f"porta_{i}"
         mesh_porta = g3d.gerar_porta_3d(p, espessura_parede_m=ESPESSURA_PAREDE_M)
+        g3d.aplicar_material_base(mesh_porta, "porta")
         scene.add_geometry(mesh_porta, node_name=node_name)
         objetos.append({
             "id": f"porta-{i}",
