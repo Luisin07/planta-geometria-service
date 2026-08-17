@@ -88,6 +88,21 @@ MEDIA_TYPES_IMAGEM = {"tiff": "image/tiff", "jpeg": "image/jpeg", "png": "image/
 
 NAO_FISICOS = {"CONCRETE", "GR1"}
 
+
+def _e_rotulo_porta_correr(nome):
+    """(16/08) O mesmo texto que detectar_portas_correr() usa pra achar a
+    porta de correr (ex: 'SLIDING DOOR') também passava pelo filtro de
+    objeto/móvel comum -- confirmado com dado real
+    (Two-story-house-410202.dxf, objeto-13 e objeto-14): gerava uma
+    caixa genérica flutuando na cena com o nome 'SLIDING DOOR',
+    redundante com a porta já cortada na parede pelo outro pipeline.
+    Reusa a mesma lista de palavras-chave de eg.PALAVRAS_CHAVE_PORTA_CORRER
+    (substring, não igualdade exata) -- um único lugar de verdade pra
+    'isso é rótulo de porta de correr, não móvel', não duas listas que
+    podem divergir."""
+    nome_upper = nome.strip().upper()
+    return any(chave in nome_upper for chave in eg.PALAVRAS_CHAVE_PORTA_CORRER)
+
 MODELOS_CANDIDATOS_3B = [
     "gemini-3.5-flash",       # confirmado funcionando em 05/08
     "gemini-2.5-flash-lite",  # confirmado indisponível pra conta nova em 05/08, mantido como fallback
@@ -241,6 +256,8 @@ def _extrair_geometria_completa(caminho_dxf):
     objetos_fisicos = []
     for o in objetos_texto:
         if o["nome"] in NAO_FISICOS or o["nome"] == nome_comodo:
+            continue
+        if _e_rotulo_porta_correr(o["nome"]):
             continue
         if _e_anotacao_tecnica(o["nome"]):
             continue
@@ -447,6 +464,8 @@ async def processar_planta(arquivo: UploadFile = File(...)):
     caixas_objetos_qtd = 0
     for i, o in enumerate(g["objetos_texto"]):
         if o["nome"] in NAO_FISICOS or o["nome"] == g["nome_comodo"]:
+            continue
+        if _e_rotulo_porta_correr(o["nome"]):
             continue
         if _e_anotacao_tecnica(o["nome"]):
             continue
