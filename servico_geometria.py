@@ -379,7 +379,7 @@ async def processar_planta(arquivo: UploadFile = File(...)):
     # completo de verdade (não só a função isolada), antes de tentar de
     # novo em produção.
     BIBLIOTECA_OBJETOS = {
-        # "TOILET": {"arquivo": "biblioteca_objetos/toilet.glb"},
+        "TOILET": {"arquivo": "biblioteca_objetos/toilet.glb"},
     }
 
     def _converter_y_up_para_z_up(malha):
