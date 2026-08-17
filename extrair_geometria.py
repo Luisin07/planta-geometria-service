@@ -722,11 +722,30 @@ def detectar_portas_correr(doc, paredes, fator_para_metros, raio_busca_m=2.5,
 
         if melhor_gap:
             largura_m, centro = melhor_gap
-            portas_correr.append({
-                "metodo": "texto+gap (porta de correr)",
-                "posicao": list(centro),
-                "largura_estimada_m": round(largura_m, 3),
-            })
+            # DEDUP (16/08): mais de um rótulo de texto pode se referir ao
+            # MESMO vão físico -- confirmado com dado real
+            # (Two-story-house-410202.dxf tem 3 ocorrências de "SLIDING
+            # DOOR" pra só 2 portas físicas reais; nesse arquivo específico
+            # o rótulo duplicado ficou por pouco fora do raio de busca e
+            # não gerou duplicata, mas isso foi sorte de posição, não
+            # garantia -- um arquivo com os dois rótulos mais próximos um
+            # do outro geraria duas portas sobrepostas no mesmo vão,
+            # cortando a parede duas vezes e duplicando a geometria da
+            # porta no .glb). Considera "mesmo vão" quando o centro
+            # detectado já foi encontrado antes, a menos de 0.1m de
+            # distância real.
+            TOLERANCIA_MESMO_VAO_M = 0.1
+            duplicata = any(
+                ((centro[0] - p["posicao"][0]) ** 2 + (centro[1] - p["posicao"][1]) ** 2) ** 0.5
+                * fator_para_metros <= TOLERANCIA_MESMO_VAO_M
+                for p in portas_correr
+            )
+            if not duplicata:
+                portas_correr.append({
+                    "metodo": "texto+gap (porta de correr)",
+                    "posicao": list(centro),
+                    "largura_estimada_m": round(largura_m, 3),
+                })
 
     return portas_correr
 
